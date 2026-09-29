@@ -4,10 +4,10 @@ An AI control layer for Windows. Give it a goal in plain language — by voice o
 plans the steps, operates your apps, files, browser and terminal, watches the screen to verify
 each step, and reports back. Full-duplex voice means you can interrupt it mid-sentence.
 
-> **Status:** V1 in development. **M0 (foundation)** and **M1 (agent core)** are complete:
-> JARVIS takes a goal, plans it, works through files, Office documents, email drafts, the shell
-> and the web under a safety layer, and reports back. Screen control and voice are next. See
-> the [roadmap](#roadmap).
+> **Status:** V1 in development. **M0 (foundation)**, **M1 (agent core)** and **M2 (screen
+> control)** are complete. JARVIS takes a goal, plans it, and works through files, Office
+> documents, email drafts, the shell, the web and any app on screen, under a safety layer,
+> then reports back. Full-duplex voice is next. See the [roadmap](#roadmap).
 
 ## Requirements
 
@@ -67,6 +67,26 @@ front-ends (M3, M5) connect to.
 
 File tools only work inside `safety.allowed_roots` (default: Documents, Desktop, Downloads).
 
+## Screen control (M2)
+
+JARVIS can see the screen and operate any app:
+
+| Tools | How it works | Models |
+|---|---|---|
+| `launch_app`, `list_windows`, `focus_window` | Starts apps from the Start menu; finds and brings windows forward | All |
+| `inspect_window`, `click_element`, `set_element_text` | Reads an app's real controls through Windows UI Automation and acts on them by id | All |
+| Computer-use toolset: `screenshot`, clicks, drag, `type`, `key`, `scroll`, `zoom`, ... | Looks at screenshots and drives the mouse and keyboard | Claude |
+
+- **Consent per task.** The first screen action in a task asks: *"Let JARVIS see your screen
+  and control the mouse and keyboard for this task?"* Set `desktop.screen_control` to `allow`
+  to stop asking, or `deny` to turn screen control off.
+- **Kill switch.** Press **Ctrl+Alt+J** anywhere to stop JARVIS immediately (`safety.kill_hotkey`).
+- **Protected windows.** JARVIS won't view or operate password managers or Windows Security
+  (`desktop.blocked_windows`). It refuses to type into password fields.
+- **Multiple monitors.** JARVIS works on one monitor (`desktop.monitor`, default: primary).
+  Windows it focuses are moved onto that monitor.
+- Screenshots are sent to the model provider. They are never written to disk.
+
 The default model is Claude Opus 5.5 (`llm.anthropic.model`), with `effort = "high"`.
 Anthropic's server-side refusal fallback is enabled (`llm.anthropic.server_fallback`).
 
@@ -115,7 +135,7 @@ See [SECURITY.md](SECURITY.md) and [docs/architecture.md](docs/architecture.md).
 |---|---|---|
 | M0 | Foundation: config, logging, secrets, API, CLI, CI, installer | ✅ |
 | M1 | Agent core (plan → act → verify), Claude + Ollama providers, file/shell/Office/email/web tools, safety layer | ✅ |
-| M2 | Screen perception (UI Automation + vision + OCR), mouse/keyboard/app and browser control | ⏳ |
+| M2 | Screen perception (UI Automation + screenshots), mouse/keyboard/app control, kill switch | ✅ |
 | M3 | Full-duplex voice: AEC, VAD, barge-in, streaming STT/TTS, wake word | ⏳ |
 | M4 | Long-term memory, reusable workflows, task resume | ⏳ |
 | M5 | Tray/overlay UI, first-run wizard, V1 release | ⏳ |

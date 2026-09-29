@@ -31,6 +31,8 @@ from jarvis.tools.base import ToolContext, ToolRegistry
 log = logging.getLogger(__name__)
 
 LLM_RETRIES = 2
+COMPUTER = "computer"
+HALT_TEXT = "Not executed: an earlier computer action in this turn failed."
 
 
 class TaskStatus(StrEnum):
@@ -72,10 +74,23 @@ class Agent:
         self._cfg = cfg
         self._emit = emit
         ctx.emit = emit
+        screen = ctx.desktop is not None
         self._conv: Conversation = provider.new_conversation(
-            build_system_prompt(ctx.guard.allowed), registry.specs()
+            build_system_prompt(
+                ctx.guard.allowed,
+                screen=screen,
+                pixel_control=screen and provider.supports_computer_use,
+                kill_hotkey=ctx.settings.safety.kill_hotkey,
+            ),
+            registry.specs(),
+            computer_use=screen and provider.supports_computer_use,
         )
         self._lock = asyncio.Lock()
+
+    def close(self) -> None:
+        """Release OS resources (UI Automation thread, held keys)."""
+        if self._ctx.desktop is not None:
+            self._ctx.desktop.close()
 
     @property
     def busy(self) -> bool:
@@ -84,6 +99,7 @@ class Agent:
     async def run(self, goal: str) -> TaskResult:
         async with self._lock:
             task_id = uuid.uuid4().hex[:12]
+            self._ctx.task_id = task_id
             result = TaskResult(task_id, TaskStatus.FAILED, "")
             self._ctx.audit.record("task.start", task_id=task_id, goal=goal)
             await self._emit({"type": "task.started", "task_id": task_id, "goal": goal})
@@ -109,6 +125,9 @@ class Agent:
             return result
 
     async def _finish(self, result: TaskResult) -> None:
+        if self._ctx.desktop is not None:
+            # Screen consent is per task; also let go of any keys/buttons still held.
+            self._ctx.desktop.end_task(result.task_id)
         self._ctx.audit.record(
             "task.finish",
             task_id=result.task_id,
@@ -141,7 +160,7 @@ class Agent:
             return
         done = {o.call_id for o in pending.outcomes}
         results = list(pending.outcomes) + [
-            ToolOutcome(c.id, c.name, reason, is_error=True)
+            ToolOutcome(c.id, c.name, reason, is_error=True, toolset=c.toolset)
             for c in pending.calls
             if c.id not in done
         ]
@@ -191,8 +210,17 @@ class Agent:
                         "Retry with smaller steps (e.g. write large content in parts).",
                     )
                     continue
+                halted = False
                 for call in turn.tool_calls:
-                    pending.outcomes.append(await self._run_tool(call, result))
+                    if halted and call.toolset == COMPUTER:
+                        # Batch rule: after a failed computer action, later ones are skipped.
+                        pending.outcomes.append(
+                            ToolOutcome(call.id, call.name, HALT_TEXT, True, toolset=COMPUTER)
+                        )
+                        continue
+                    outcome = await self._run_tool(call, result)
+                    halted = halted or (outcome.is_error and call.toolset == COMPUTER)
+                    pending.outcomes.append(outcome)
                 self._conv.add_tool_results(pending.outcomes)
                 pending.calls, pending.outcomes = [], []
                 continue

@@ -45,6 +45,8 @@ class OllamaConversation:
     def add_tool_results(self, results: list[ToolOutcome]) -> None:
         for r in results:
             content = f"ERROR: {r.content}" if r.is_error else r.content
+            if r.images:
+                content += "\n[image omitted: this model cannot see screenshots]"
             self.messages.append({"role": "tool", "tool_name": r.name, "content": content})
 
     async def step(self) -> TurnResult:
@@ -100,6 +102,7 @@ class OllamaConversation:
 
 class OllamaProvider:
     name = "ollama"
+    supports_computer_use = False
 
     def __init__(
         self, cfg: OllamaConfig, transport: httpx.AsyncBaseTransport | None = None
@@ -109,7 +112,9 @@ class OllamaProvider:
             base_url=cfg.host, timeout=cfg.timeout_s, transport=transport
         )
 
-    def new_conversation(self, system: str, tools: list[ToolSpec]) -> OllamaConversation:
+    def new_conversation(
+        self, system: str, tools: list[ToolSpec], computer_use: bool = False
+    ) -> OllamaConversation:
         return OllamaConversation(self._client, self._cfg, system, tools)
 
     async def check(self) -> tuple[bool, str]:

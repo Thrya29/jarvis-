@@ -20,6 +20,8 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from jarvis.agent.events import EventSink, null_sink
 from jarvis.core.audit import AuditLog
 from jarvis.core.config import Settings
+from jarvis.desktop.computer import OBSERVE_ONLY, TOOLSET_NAME, ComputerError
+from jarvis.desktop.session import DesktopSession
 from jarvis.llm.base import ToolCall, ToolOutcome, ToolSpec
 from jarvis.safety.policy import (
     ApprovalRequest,
@@ -58,6 +60,8 @@ class ToolContext:
     approver: Approver
     work_dir: Path  # scratch space for sandboxed code
     emit: EventSink = null_sink
+    desktop: DesktopSession | None = None
+    task_id: str = ""
 
 
 class Tool[A: ToolArgs](ABC):
@@ -65,6 +69,8 @@ class Tool[A: ToolArgs](ABC):
     description: ClassVar[str]
     args_model: ClassVar[type[ToolArgs]]
     risk: ClassVar[Risk]
+    # Tools that look at or operate the screen need the user's per-task consent.
+    requires_desktop: ClassVar[bool] = False
 
     def risk_for(self, args: A, ctx: ToolContext) -> Risk:
         """Risk can depend on arguments (e.g. overwriting vs creating)."""
@@ -114,6 +120,12 @@ class ToolRegistry:
         return list(self._tools)
 
     async def execute(self, call: ToolCall, ctx: ToolContext) -> ToolOutcome:
+        if call.toolset == TOOLSET_NAME:
+            return await self._computer(call, ctx)
+        if call.toolset is not None:
+            return ToolOutcome(
+                call.id, call.name, f"Unknown toolset {call.toolset!r}.", True, toolset=call.toolset
+            )
         tool = self._tools.get(call.name)
         if tool is None:
             return ToolOutcome(call.id, call.name, f"Unknown tool {call.name!r}.", is_error=True)
@@ -133,6 +145,13 @@ class ToolRegistry:
         except (PathDeniedError, ToolError) as exc:
             ctx.audit.record("tool.denied", tool=call.name, reason=str(exc))
             return ToolOutcome(call.id, call.name, str(exc), is_error=True)
+
+        if tool.requires_desktop:
+            if ctx.desktop is None:
+                return ToolOutcome(call.id, call.name, "Desktop control is unavailable.", True)
+            refusal = await ctx.desktop.consent(ctx.task_id, ctx.approver)
+            if refusal:
+                return ToolOutcome(call.id, call.name, refusal, is_error=True)
 
         summary = tool.summarize(args)
         if needs_approval(risk, ctx.settings.safety):
@@ -185,3 +204,44 @@ class ToolRegistry:
             content = fence_untrusted(content, result.source or call.name)
         ctx.audit.record("tool.done", tool=call.name, chars=len(result.content))
         return ToolOutcome(call.id, call.name, content)
+
+    async def _computer(self, call: ToolCall, ctx: ToolContext) -> ToolOutcome:
+        """Run one member of Claude's computer-use toolset through the safety checks."""
+
+        def fail(msg: str) -> ToolOutcome:
+            return ToolOutcome(call.id, call.name, msg, is_error=True, toolset=TOOLSET_NAME)
+
+        desktop = ctx.desktop
+        if desktop is None or desktop.computer is None:
+            return fail("Error: screen control is not available in this session.")
+        refusal = await desktop.consent(ctx.task_id, ctx.approver)
+        if refusal:
+            return fail(f"Error: {refusal}")
+        if call.name not in {"wait", "cursor_position"}:
+            blocked = await desktop.protected_foreground()
+            if blocked:
+                ctx.audit.record("computer.blocked", action=call.name, window=blocked)
+                return fail(
+                    f"Error: the foreground window '{blocked}' is protected; JARVIS won't view "
+                    "or operate it. Switch to another window or ask the user."
+                )
+        if call.name == "type" and await desktop.uia.focused_is_password():
+            return fail("Error: the focused field is a password field; ask the user to type it.")
+
+        audit_input = dict(call.input)
+        if call.name == "type":
+            audit_input["text"] = f"<{len(str(call.input.get('text', '')))} chars>"
+        if call.name not in OBSERVE_ONLY:
+            ctx.audit.record("computer.action", action=call.name, input=audit_input)
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(desktop.computer.execute, call.name, call.input),
+                timeout=ctx.settings.agent.tool_timeout_s,
+            )
+        except ComputerError as exc:
+            return fail(f"Error: {exc}")
+        except (OSError, TimeoutError) as exc:
+            ctx.audit.record("computer.error", action=call.name, error=str(exc))
+            return fail(f"Error: {exc or 'timed out'}")
+        images = (result.png,) if result.png else ()
+        return ToolOutcome(call.id, call.name, result.text, images=images, toolset=TOOLSET_NAME)

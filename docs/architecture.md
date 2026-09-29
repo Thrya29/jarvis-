@@ -40,6 +40,13 @@ JARVIS is a single Windows process (the **daemon**) that hosts every subsystem, 
 | `src/jarvis/tools/` | Tool contract + registry pipeline, and the file, Office, email, execution and web tools |
 | `src/jarvis/server/session.py` | Per-client agent session over WebSocket; approvals round-trip to the client |
 | `src/jarvis/interfaces/console.py` | Terminal renderer and approver for `jarvis do` / `jarvis chat` |
+| `src/jarvis/desktop/winapi.py` | ctypes: DPI awareness, `SendInput` mouse/keyboard, window geometry |
+| `src/jarvis/desktop/screen.py` | Monitor capture (mss), downscaling, screenshot-to-screen coordinate mapping, zoom |
+| `src/jarvis/desktop/computer.py` | Executes the 17 members of Claude's `computer_toolset_20260801` |
+| `src/jarvis/desktop/uia.py` | UI Automation service on a dedicated COM thread: windows, control trees, patterns, app launch |
+| `src/jarvis/desktop/session.py` | Per-task screen-control consent and protected-window checks |
+| `src/jarvis/desktop/killswitch.py` | Global kill hotkey on its own Win32 message loop |
+| `src/jarvis/tools/desktop.py` | Model-agnostic desktop tools built on the UIA service |
 | `packaging/` | PyInstaller spec, Inno Setup installer script |
 
 ## Key decisions
@@ -84,6 +91,21 @@ Every tool call goes through `ToolRegistry.execute` in this order:
 6. Wrap untrusted output in a fence, truncate it, and write the audit log again.
 
 Failures come back to the model as error results; they never crash the task.
+
+## Screen control
+
+- Claude gets the `computer_toolset_20260801` entry (no beta header). Its calls are `tool_use`
+  blocks named after the member (`left_click`, `type`, ...) with `toolset_name: "computer"`,
+  often several per turn. JARVIS runs them in order. After the first failure it answers the
+  rest with the exact halt text, and every result echoes `toolset_name`.
+- Screenshots are downscaled to `desktop.max_screenshot_edge` (default 1366 px, hard cap
+  2000 px). Coordinates are mapped back to physical pixels. The process is per-monitor-v2
+  DPI aware, so screenshots, `SendInput` and UI Automation rectangles agree.
+- History stays append-only; old screenshots are removed server-side by context editing
+  (`clear_tool_uses_20250919`, cleared in large batches). This never invalidates thinking
+  blocks.
+- Every model gets the UI Automation tools. Text-only local models can operate standard apps
+  through them; they don't get pixel control.
 
 ## Agent loop invariants
 

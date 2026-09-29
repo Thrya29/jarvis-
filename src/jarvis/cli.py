@@ -200,6 +200,18 @@ async def _run_goals(goals: list[str] | None, paths: AppPaths, assume_no: bool) 
             raise KeyboardInterrupt
 
     previous = signal.signal(signal.SIGINT, on_sigint)
+
+    def on_kill() -> None:
+        if running is not None and not running.done():
+            print(f"\n  [kill switch] stopping ({settings.safety.kill_hotkey})", flush=True)
+            running.cancel()
+
+    switch = None
+    if sys.platform == "win32":
+        from jarvis.desktop.killswitch import KillSwitch
+
+        switch = KillSwitch(settings.safety.kill_hotkey, lambda: loop.call_soon_threadsafe(on_kill))
+        switch.start()
     try:
         if goals is not None:
             status = TaskStatus.COMPLETED
@@ -224,6 +236,9 @@ async def _run_goals(goals: list[str] | None, paths: AppPaths, assume_no: bool) 
                 await running
     finally:
         signal.signal(signal.SIGINT, previous)
+        if switch is not None:
+            switch.stop()
+        agent.close()
         await provider.aclose()
 
 
@@ -308,6 +323,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         if isinstance(stream, io.TextIOWrapper):
             stream.reconfigure(errors="replace")
     args = build_parser().parse_args(argv)
+    # Physical-pixel coordinates everywhere (screenshots, clicks, UI Automation).
+    from jarvis.desktop.winapi import enable_dpi_awareness
+
+    enable_dpi_awareness()
     paths = get_paths().ensure()
     func: Callable[[argparse.Namespace, AppPaths], int] = args.func
     return func(args, paths)

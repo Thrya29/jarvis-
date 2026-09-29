@@ -1,6 +1,6 @@
 [project]
 name = "jarvis"
-version = "0.2.0"
+version = "0.3.0"
 description = "JARVIS - an AI control layer for Windows: voice, vision, and computer control."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -27,6 +27,9 @@ dependencies = [
     "pypdf>=6.19.0",
     "send2trash>=2.1.0",
     "pywin32>=308 ; sys_platform == 'win32'",
+    "mss>=10.2.0",
+    "pillow>=12.3.0",
+    "uiautomation>=2.0.20 ; sys_platform == 'win32'",
 ]
 
 [project.scripts]
@@ -71,7 +74,7 @@ packages = ["jarvis"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["keyring.*", "send2trash.*", "docx.*"]
+module = ["keyring.*", "send2trash.*", "docx.*", "comtypes.*", "uiautomation.*", "mss.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

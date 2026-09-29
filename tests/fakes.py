@@ -64,13 +64,17 @@ class ScriptedConversation:
 class ScriptedProvider:
     name = "scripted"
 
-    def __init__(self, script: list[Step]) -> None:
+    def __init__(self, script: list[Step], supports_computer_use: bool = False) -> None:
         self.conversation = ScriptedConversation(script)
         self.tools: list[ToolSpec] = []
         self.system = ""
+        self.supports_computer_use = supports_computer_use
+        self.computer_use = False
 
-    def new_conversation(self, system: str, tools: list[ToolSpec]) -> ScriptedConversation:
-        self.system, self.tools = system, tools
+    def new_conversation(
+        self, system: str, tools: list[ToolSpec], computer_use: bool = False
+    ) -> ScriptedConversation:
+        self.system, self.tools, self.computer_use = system, tools, computer_use
         return self.conversation
 
     async def check(self) -> tuple[bool, str]:

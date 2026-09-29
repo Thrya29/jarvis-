@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import sys
 from typing import Any
 
 from jarvis.agent.builtin_tools import BUILTIN_TOOLS
 from jarvis.agent.events import EventSink, null_sink
 from jarvis.agent.loop import Agent
 from jarvis.core.audit import AuditLog
-from jarvis.core.config import Settings
+from jarvis.core.config import ScreenControl, Settings
 from jarvis.core.paths import AppPaths
+from jarvis.desktop.session import DesktopSession
 from jarvis.llm import create_provider
 from jarvis.llm.base import LLMProvider
 from jarvis.safety.policy import Approver, PathGuard
 from jarvis.tools.base import Tool, ToolContext, ToolRegistry
+from jarvis.tools.desktop import DESKTOP_TOOLS
 from jarvis.tools.execution import EXEC_TOOLS
 from jarvis.tools.files import FILE_TOOLS
 from jarvis.tools.mail import EMAIL_TOOLS
@@ -21,8 +24,27 @@ from jarvis.tools.office import OFFICE_TOOLS
 from jarvis.tools.web import WEB_TOOLS
 
 
-def all_tools() -> list[Tool[Any]]:
-    return [*BUILTIN_TOOLS, *FILE_TOOLS, *OFFICE_TOOLS, *EMAIL_TOOLS, *EXEC_TOOLS, *WEB_TOOLS]
+def all_tools(desktop: bool = False) -> list[Tool[Any]]:
+    tools = [*BUILTIN_TOOLS, *FILE_TOOLS, *OFFICE_TOOLS, *EMAIL_TOOLS, *EXEC_TOOLS, *WEB_TOOLS]
+    return [*tools, *DESKTOP_TOOLS] if desktop else tools
+
+
+def build_desktop(settings: Settings) -> DesktopSession | None:
+    """Screen tools are Windows-only and can be switched off entirely in settings."""
+    if sys.platform != "win32" or settings.desktop.screen_control is ScreenControl.DENY:
+        return None
+    from jarvis.desktop.computer import ComputerController, Win32Input
+    from jarvis.desktop.screen import ScreenCapture
+    from jarvis.desktop.uia import UIAService
+
+    cfg = settings.desktop
+    screen = ScreenCapture(cfg.monitor, cfg.max_screenshot_edge)
+    return DesktopSession(
+        cfg,
+        UIAService(cfg.blocked_windows, monitor_area=screen.monitor_area),
+        ComputerController(screen, Win32Input()),
+        kill_hotkey=settings.safety.kill_hotkey,
+    )
 
 
 def build_agent(
@@ -43,7 +65,9 @@ def build_agent(
         audit=AuditLog(paths.audit_log),
         approver=approver,
         work_dir=paths.cache_dir / "work",
+        desktop=build_desktop(settings),
     )
     provider = provider or create_provider(settings.llm)
-    agent = Agent(provider, ToolRegistry(all_tools()), ctx, settings.agent, emit)
+    tools = all_tools(desktop=ctx.desktop is not None)
+    agent = Agent(provider, ToolRegistry(tools), ctx, settings.agent, emit)
     return agent, provider

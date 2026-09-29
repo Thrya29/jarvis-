@@ -112,6 +112,27 @@ class SafetyConfig(BaseModel):
     kill_hotkey: str = "ctrl+alt+j"
 
 
+class ScreenControl(StrEnum):
+    ASK = "ask"  # ask once per task before JARVIS looks at or operates the screen
+    ALLOW = "allow"
+    DENY = "deny"
+
+
+DEFAULT_BLOCKED_WINDOWS = [
+    "*keepass*", "*1password*", "*bitwarden*", "*lastpass*", "*dashlane*", "*keeper*",
+    "*proton pass*", "*nordpass*", "*roboform*", "windows security*", "*credential manager*",
+]  # fmt: skip
+
+
+class DesktopConfig(BaseModel):
+    screen_control: ScreenControl = ScreenControl.ASK
+    monitor: int = Field(default=1, ge=1, description="1 = primary monitor")
+    # Screenshots are downscaled to this long edge before the model sees them.
+    max_screenshot_edge: int = Field(default=1366, ge=640, le=2000)
+    # Case-insensitive glob patterns; JARVIS won't read or operate matching windows.
+    blocked_windows: list[str] = Field(default_factory=lambda: list(DEFAULT_BLOCKED_WINDOWS))
+
+
 class AgentConfig(BaseModel):
     max_turns: int = Field(default=60, ge=1, le=500)
     task_timeout_s: float = Field(default=1800.0, gt=0)
@@ -139,6 +160,7 @@ class Settings(BaseSettings):
     voice: VoiceConfig = VoiceConfig()
     safety: SafetyConfig = SafetyConfig()
     agent: AgentConfig = AgentConfig()
+    desktop: DesktopConfig = DesktopConfig()
     logging: LoggingConfig = LoggingConfig()
 
     @classmethod

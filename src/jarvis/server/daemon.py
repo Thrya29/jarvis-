@@ -41,7 +41,7 @@ def run_daemon(settings: Settings, paths: AppPaths) -> None:
         token = load_or_create_token(paths.token_file)
         audit = AuditLog(paths.audit_log)
         factory = _agent_factory(settings, paths)
-        app = create_app(settings, token, factory)
+        app = create_app(settings, token, factory, kill_switch=True)
         audit.record("daemon.start", version=__version__)
         log.info(
             "JARVIS %s listening on http://%s:%d",
