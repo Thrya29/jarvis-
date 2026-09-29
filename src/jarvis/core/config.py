@@ -12,6 +12,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+import platformdirs
 import tomli_w
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import (
@@ -38,16 +39,29 @@ class LogLevel(StrEnum):
     ERROR = "ERROR"
 
 
+class Effort(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    XHIGH = "xhigh"
+    MAX = "max"
+
+
 class AnthropicConfig(BaseModel):
-    model: str = "claude-sonnet-5-5"
-    max_tokens: int = Field(default=8192, ge=256, le=128_000)
-    timeout_s: float = Field(default=120.0, gt=0)
+    model: str = "claude-opus-5-5"
+    effort: Effort = Effort.HIGH
+    # Requests are streamed, so a large output ceiling doesn't risk HTTP timeouts.
+    max_tokens: int = Field(default=64_000, ge=1024, le=128_000)
+    timeout_s: float = Field(default=600.0, gt=0)
+    # Re-run a safety-classifier refusal on Anthropic's recommended fallback model.
+    server_fallback: bool = True
 
 
 class OllamaConfig(BaseModel):
     host: str = "http://127.0.0.1:11434"
     model: str = "qwen2.5:3b"
     timeout_s: float = Field(default=300.0, gt=0)
+    num_ctx: int = Field(default=16_384, ge=2048)
 
 
 class LLMConfig(BaseModel):
@@ -78,10 +92,31 @@ class VoiceConfig(BaseModel):
     tts_voice: str = "af_heart"
 
 
+def _default_roots() -> list[Path]:
+    # Known-folder lookups follow OneDrive redirection of Desktop/Documents.
+    return [
+        Path(platformdirs.user_documents_dir()),
+        Path(platformdirs.user_desktop_dir()),
+        Path(platformdirs.user_downloads_dir()),
+    ]
+
+
 class SafetyConfig(BaseModel):
-    allowed_roots: list[Path] = Field(default_factory=lambda: [Path.home() / "Documents"])
+    # File tools may only touch paths inside these folders.
+    allowed_roots: list[Path] = Field(default_factory=_default_roots)
+    # Creating new files inside allowed_roots without asking.
+    auto_approve_writes: bool = True
+    # Asking before running shell commands / code. Deleting, overwriting and anything
+    # that leaves the machine (email, uploads) always asks regardless of this flag.
     confirm_risky_actions: bool = True
     kill_hotkey: str = "ctrl+alt+j"
+
+
+class AgentConfig(BaseModel):
+    max_turns: int = Field(default=60, ge=1, le=500)
+    task_timeout_s: float = Field(default=1800.0, gt=0)
+    tool_timeout_s: float = Field(default=120.0, gt=0)
+    max_tool_output_chars: int = Field(default=30_000, ge=1000)
 
 
 class LoggingConfig(BaseModel):
@@ -103,6 +138,7 @@ class Settings(BaseSettings):
     server: ServerConfig = ServerConfig()
     voice: VoiceConfig = VoiceConfig()
     safety: SafetyConfig = SafetyConfig()
+    agent: AgentConfig = AgentConfig()
     logging: LoggingConfig = LoggingConfig()
 
     @classmethod
