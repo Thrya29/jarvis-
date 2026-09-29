@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Lint, type-check, test
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy
+      - run: uv run pytest
+
+  build:
+    name: Build executable
+    needs: check
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run python packaging/make_version_info.py
+      - run: uv run pyinstaller packaging/jarvis.spec --noconfirm --distpath dist --workpath build
+      - name: Smoke test frozen build
+        shell: pwsh
+        env:
+          JARVIS_HOME: ${{ runner.temp }}\jarvis-home
+        run: |
+          ./dist/jarvis/jarvis.exe version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          ./dist/jarvis/jarvis.exe config init
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-windows-x64
+          path: dist/jarvis
+          retention-days: 7

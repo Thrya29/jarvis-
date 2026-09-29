@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run pytest
+
+      - name: Verify tag matches pyproject version
+        id: version
+        shell: pwsh
+        run: |
+          $version = uv run python packaging/make_version_info.py
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            Write-Error "Tag ${{ github.ref_name }} does not match pyproject version $version"
+            exit 1
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - run: uv run pyinstaller packaging/jarvis.spec --noconfirm --distpath dist --workpath build
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc /DAppVersion=${{ steps.version.outputs.version }} packaging\jarvis.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Checksums
+        shell: pwsh
+        run: |
+          Get-FileHash packaging\Output\*.exe -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
+            Out-File -Encoding ascii packaging\Output\SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            packaging/Output/JarvisSetup-*.exe
+            packaging/Output/SHA256SUMS.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: true
