@@ -1,0 +1,71 @@
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "JARVIS - an AI control layer for Windows: voice, vision, and computer control."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+authors = [{ name = "Thrya29" }]
+classifiers = [
+    "Operating System :: Microsoft :: Windows :: Windows 10",
+    "Operating System :: Microsoft :: Windows :: Windows 11",
+    "Programming Language :: Python :: 3.12",
+    "Private :: Do Not Upload",
+]
+dependencies = [
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "platformdirs>=4.3",
+    "keyring>=25.5",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "websockets>=13.1",
+    "tomli-w>=1.1",
+]
+
+[project.scripts]
+jarvis = "jarvis.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "httpx2>=0.1",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "pyinstaller>=6.11",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jarvis"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "SIM", "RUF", "ASYNC", "PTH"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+packages = ["jarvis"]
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["keyring.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers"
