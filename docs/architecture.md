@@ -71,6 +71,8 @@ JARVIS is a single Windows process (the **daemon**) that hosts every subsystem, 
 4. Client → server:
    - `{"type": "task.start", "goal": "..."}` starts a task (one at a time per machine).
    - `{"type": "task.cancel"}` cancels it.
+   - `{"type": "task.resume", "task_id": "..."}` resumes an interrupted, cancelled,
+     failed or limit-reached task from the journal.
    - `{"type": "approval.response", "id": "...", "approved": true|false, "note": "..."}`
    - `{"type": "ask.response", "id": "...", "answer": "..."}`
    - `{"type": "ping"}` → `{"type": "pong"}`
@@ -106,6 +108,25 @@ Failures come back to the model as error results; they never crash the task.
   blocks.
 - Every model gets the UI Automation tools. Text-only local models can operate standard apps
   through them; they don't get pixel control.
+
+## Memory, workflows and the task journal
+
+`memory/store.py` keeps one SQLite database (WAL mode) with three parts:
+- `memories` with an FTS5 index (Porter stemming, BM25 ranking).
+- `workflows`: named instructions with `{parameter}` placeholders.
+- `tasks`: goal, status, plan snapshot, summary, and the owning process id.
+
+How it's used:
+- Each goal carries a `<memory>` block with all preferences plus the best keyword matches,
+  capped by `memory.context_items`. It goes in the user turn, so the cached system prompt
+  never changes.
+- The agent journals task start, plan updates and finish. Journal errors are logged, never
+  fatal.
+- At startup, `running` tasks whose process is no longer alive become `interrupted`. Tasks
+  owned by another live JARVIS process are left alone.
+- Resuming starts a new task linked by `resumed_from`. Its goal restates the original
+  request, the last plan and the outcome, and asks the model to check the current state
+  before repeating any step.
 
 ## Voice pipeline
 

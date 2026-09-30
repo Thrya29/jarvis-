@@ -27,6 +27,7 @@ from jarvis.core.instance import AlreadyRunningError
 from jarvis.core.logging_setup import configure_logging
 from jarvis.core.paths import AppPaths, get_paths
 from jarvis.core.secrets import SecretName, delete_secret, get_secret, set_secret
+from jarvis.memory.store import Store
 
 log = logging.getLogger("jarvis")
 
@@ -194,7 +195,9 @@ def cmd_secret(args: argparse.Namespace, paths: AppPaths) -> int:
     return 0
 
 
-async def _run_goals(goals: list[str] | None, paths: AppPaths, assume_no: bool) -> int:
+async def _run_goals(
+    goals: list[str] | None, paths: AppPaths, assume_no: bool, resumed_from: str | None = None
+) -> int:
     from jarvis.agent.factory import build_agent
     from jarvis.agent.loop import TaskResult, TaskStatus
     from jarvis.interfaces.console import ConsoleApprover, print_event
@@ -234,7 +237,7 @@ async def _run_goals(goals: list[str] | None, paths: AppPaths, assume_no: bool) 
         if goals is not None:
             status = TaskStatus.COMPLETED
             for goal in goals:
-                running = asyncio.create_task(agent.run(goal))
+                running = asyncio.create_task(agent.run(goal, resumed_from=resumed_from))
                 try:
                     status = (await running).status
                 except asyncio.CancelledError:
@@ -279,6 +282,105 @@ async def _read_line(prompt: str) -> str | None:
 
     threading.Thread(target=reader, daemon=True).start()
     return await fut
+
+
+def _open_store(paths: AppPaths) -> Store:
+    from jarvis.agent.factory import open_store
+
+    store = open_store(_load_or_exit(), paths)
+    if store is None:
+        print("Memory is turned off (memory.enabled = false).", file=sys.stderr)
+        raise SystemExit(2)
+    return store
+
+
+def cmd_memory(args: argparse.Namespace, paths: AppPaths) -> int:
+    store = _open_store(paths)
+    if args.action == "list":
+        mems = store.memories()
+        for m in mems:
+            print(f"#{m.id:<4} [{m.kind.value:<10}] {m.content}")
+        print(f"{len(mems)} memories." if mems else "Nothing remembered yet.")
+    elif args.action == "search":
+        for m in store.search(" ".join(args.args)):
+            print(f"#{m.id:<4} [{m.kind.value:<10}] {m.content}")
+    elif args.action == "forget":
+        if not args.args or not args.args[0].isdigit():
+            print("usage: jarvis memory forget <id>", file=sys.stderr)
+            return 2
+        print("Forgotten." if store.forget(int(args.args[0])) else "No such memory.")
+    elif args.action == "clear":
+        answer = input("Delete ALL memories? Type 'yes' to confirm: ").strip().lower()
+        if answer != "yes":
+            print("Cancelled.")
+            return 1
+        print(f"Deleted {store.forget_all()} memories.")
+    return 0
+
+
+def cmd_workflows(args: argparse.Namespace, paths: AppPaths) -> int:
+    store = _open_store(paths)
+    if args.action == "list":
+        wfs = store.workflows()
+        for w in wfs:
+            params = f"  (needs: {', '.join(w.parameters)})" if w.parameters else ""
+            print(f"- {w.name}: {w.description}{params}  [run {w.run_count}x]")
+        if not wfs:
+            print('No workflows yet. After a task, say "save this as a workflow called ...".')
+        return 0
+    if not args.args:
+        print(f"usage: jarvis workflows {args.action} <name> ...", file=sys.stderr)
+        return 2
+    name = args.args[0]
+    if args.action == "show":
+        wf = store.workflow(name)
+        if wf is None:
+            print(f"No workflow named {name!r}.", file=sys.stderr)
+            return 1
+        print(f"{wf.name}: {wf.description}\nParameters: {', '.join(wf.parameters) or 'none'}")
+        print(f"\n{wf.instructions}")
+        return 0
+    if args.action == "delete":
+        print("Deleted." if store.delete_workflow(name) else "No such workflow.")
+        return 0
+    # run: remaining args are key=value parameters
+    values = dict(a.split("=", 1) for a in args.args[1:] if "=" in a)
+    wf = store.workflow(name)
+    if wf is None:
+        print(f"No workflow named {name!r}.", file=sys.stderr)
+        return 1
+    missing = [p for p in wf.parameters if p not in values]
+    if missing:
+        print(f"Missing parameters: {', '.join(f'{p}=...' for p in missing)}", file=sys.stderr)
+        return 2
+    args_text = ", ".join(f"{k}={v!r}" for k, v in values.items())
+    goal = f"Run my saved workflow {wf.name!r}" + (f" with {args_text}." if values else ".")
+    return asyncio.run(_run_goals([goal], paths, assume_no=False))
+
+
+def cmd_tasks(args: argparse.Namespace, paths: AppPaths) -> int:
+    from jarvis.memory.store import RESUMABLE, resume_goal
+
+    store = _open_store(paths)
+    if args.action == "list":
+        rows = store.tasks(args.limit)
+        for t in rows:
+            mark = " (resumable)" if t.status in RESUMABLE else ""
+            print(f"{t.id}  {t.started_at}  [{t.status}]{mark}  {t.goal[:70]}")
+        if not rows:
+            print("No tasks yet.")
+        return 0
+    if not args.task_id:
+        print("usage: jarvis tasks resume <task-id>", file=sys.stderr)
+        return 2
+    task = store.task(args.task_id)
+    if task is None:
+        print(f"No task {args.task_id}.", file=sys.stderr)
+        return 1
+    if task.status not in RESUMABLE:
+        print(f"Task {task.id} is {task.status}; nothing to resume.", file=sys.stderr)
+        return 1
+    return asyncio.run(_run_goals([resume_goal(task)], paths, False, resumed_from=task.id))
 
 
 def cmd_do(args: argparse.Namespace, paths: AppPaths) -> int:
@@ -395,6 +497,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_voice.add_argument("text", nargs="*", help="text for `voice say`")
     p_voice.set_defaults(func=cmd_voice)
+
+    p_mem = sub.add_parser("memory", help="see and manage what JARVIS remembers")
+    p_mem.add_argument("action", choices=["list", "search", "forget", "clear"])
+    p_mem.add_argument("args", nargs="*")
+    p_mem.set_defaults(func=cmd_memory)
+
+    p_wf = sub.add_parser("workflows", help="saved workflows")
+    p_wf.add_argument(
+        "action", nargs="?", choices=["list", "show", "run", "delete"], default="list"
+    )
+    p_wf.add_argument("args", nargs="*", help="name, then key=value parameters for run")
+    p_wf.set_defaults(func=cmd_workflows)
+
+    p_tasks = sub.add_parser("tasks", help="task history; resume interrupted tasks")
+    p_tasks.add_argument("action", nargs="?", choices=["list", "resume"], default="list")
+    p_tasks.add_argument("task_id", nargs="?")
+    p_tasks.add_argument("--limit", type=int, default=20)
+    p_tasks.set_defaults(func=cmd_tasks)
 
     p_exec = sub.add_parser("_pyexec")  # internal
     p_exec.add_argument("script")

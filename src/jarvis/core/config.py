@@ -171,6 +171,15 @@ class DesktopConfig(BaseModel):
     blocked_windows: list[str] = Field(default_factory=lambda: list(DEFAULT_BLOCKED_WINDOWS))
 
 
+class MemoryConfig(BaseModel):
+    enabled: bool = True
+    # Ask before saving or changing a memory or workflow, so nothing is remembered
+    # without the user seeing it (also blunts prompt injection that tries to plant memories).
+    confirm_writes: bool = True
+    # Memories shown to the model with each goal (all preferences + best matches).
+    context_items: int = Field(default=12, ge=0, le=50)
+
+
 class AgentConfig(BaseModel):
     max_turns: int = Field(default=60, ge=1, le=500)
     task_timeout_s: float = Field(default=1800.0, gt=0)
@@ -199,6 +208,7 @@ class Settings(BaseSettings):
     safety: SafetyConfig = SafetyConfig()
     agent: AgentConfig = AgentConfig()
     desktop: DesktopConfig = DesktopConfig()
+    memory: MemoryConfig = MemoryConfig()
     logging: LoggingConfig = LoggingConfig()
 
     @classmethod

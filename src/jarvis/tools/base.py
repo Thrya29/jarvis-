@@ -23,6 +23,7 @@ from jarvis.core.config import Settings
 from jarvis.desktop.computer import OBSERVE_ONLY, TOOLSET_NAME, ComputerError
 from jarvis.desktop.session import DesktopSession
 from jarvis.llm.base import ToolCall, ToolOutcome, ToolSpec
+from jarvis.memory.store import Store
 from jarvis.safety.policy import (
     ApprovalRequest,
     Approver,
@@ -62,6 +63,7 @@ class ToolContext:
     emit: EventSink = null_sink
     desktop: DesktopSession | None = None
     task_id: str = ""
+    store: Store | None = None  # long-term memory, workflows, task journal
 
 
 class Tool[A: ToolArgs](ABC):
@@ -80,6 +82,10 @@ class Tool[A: ToolArgs](ABC):
         """One-line human description used in approval prompts and the activity feed."""
         fields = ", ".join(f"{k}={v!r}" for k, v in args.model_dump().items())
         return f"{self.name}({fields[:200]})"
+
+    def confirm(self, args: A, ctx: ToolContext) -> bool:
+        """Ask the user even when the risk tier alone wouldn't (e.g. writing memory)."""
+        return False
 
     def details(self, args: A) -> str:
         return ""
@@ -154,7 +160,7 @@ class ToolRegistry:
                 return ToolOutcome(call.id, call.name, refusal, is_error=True)
 
         summary = tool.summarize(args)
-        if needs_approval(risk, ctx.settings.safety):
+        if needs_approval(risk, ctx.settings.safety) or tool.confirm(args, ctx):
             decision = await ctx.approver.request(
                 ApprovalRequest(tool.name, summary, risk, tool.details(args))
             )

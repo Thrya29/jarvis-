@@ -5,7 +5,7 @@ plans the steps, operates your apps, files, browser and terminal, watches the sc
 each step, and reports back. Full-duplex voice means you can interrupt it mid-sentence.
 
 > **Status:** V1 in development. **M0 (foundation)**, **M1 (agent core)**, **M2 (screen
-> control)** and **M3 (full-duplex voice)** are complete. Talk to JARVIS, interrupt it
+> control)**, **M3 (full-duplex voice)** and **M4 (memory and workflows)** are complete. Talk to JARVIS, interrupt it
 > mid-sentence, and change your instruction on the fly. It plans and works through files,
 > Office documents, email drafts, the shell, the web and any app on screen, under a safety
 > layer, and tells you what it did. See the [roadmap](#roadmap).
@@ -67,6 +67,30 @@ front-ends (M3, M5) connect to.
 | Web | `fetch_url` (public pages only), `open_url` | Yes (configurable) |
 
 File tools only work inside `safety.allowed_roots` (default: Documents, Desktop, Downloads).
+
+## Memory, workflows and task history (M4)
+
+- **Memory.** Tell JARVIS "remember that I prefer reports as PDF" and it saves a note. Your
+  preferences and the notes relevant to each request are shown to the model with every
+  goal. Saving or changing a memory asks you first (`memory.confirm_writes`).
+  Passwords, keys, card numbers and codes are refused outright.
+- **Workflows.** After a task goes well, say "save this as a workflow called weekly report".
+  Later: "run my weekly report workflow for the Falcon folder". Workflows can take
+  parameters, and you approve the saved instructions when they're created.
+- **Task history and resume.** Every task is journaled with its plan and outcome. If JARVIS
+  is closed or crashes mid-task, the task is marked *interrupted*, and you can pick it up
+  again. JARVIS checks what's already done before continuing.
+
+```powershell
+jarvis memory list | search <words> | forget <id> | clear
+jarvis workflows [list] | show <name> | run <name> key=value ... | delete <name>
+jarvis tasks [list] | resume <task-id>
+```
+
+Everything is stored in one SQLite file (`%LOCALAPPDATA%\Jarvis\Jarvis\jarvis.db`) that
+JARVIS's own tools can't read or modify. Search uses SQLite full-text search (BM25 with
+stemming). For a personal store of hundreds of notes it's accurate, and it needs no extra
+model.
 
 ## Voice (M3)
 
@@ -178,7 +202,7 @@ See [SECURITY.md](SECURITY.md) and [docs/architecture.md](docs/architecture.md).
 | M1 | Agent core (plan → act → verify), Claude + Ollama providers, file/shell/Office/email/web tools, safety layer | ✅ |
 | M2 | Screen perception (UI Automation + screenshots), mouse/keyboard/app control, kill switch | ✅ |
 | M3 | Full-duplex voice: echo cancellation, VAD, barge-in, local STT/TTS, wake word, spoken approvals | ✅ |
-| M4 | Long-term memory, reusable workflows, task resume | ⏳ |
+| M4 | Long-term memory, reusable workflows, task history and resume | ✅ |
 | M5 | Tray/overlay UI, first-run wizard, V1 release | ⏳ |
 
 ## Development

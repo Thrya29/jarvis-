@@ -16,6 +16,7 @@ from fastapi import WebSocket
 
 from jarvis.agent.events import Event, EventSink
 from jarvis.agent.loop import Agent
+from jarvis.memory.store import RESUMABLE, resume_goal
 from jarvis.safety.policy import ApprovalDecision, ApprovalRequest, Approver
 
 log = logging.getLogger(__name__)
@@ -131,6 +132,8 @@ class ClientSession:
             await self.send({"type": "pong"})
         elif kind == "task.start":
             await self._start(str(msg.get("goal") or "").strip())
+        elif kind == "task.resume":
+            await self._resume(str(msg.get("task_id") or ""))
         elif kind == "task.cancel":
             if self._task and not self._task.done():
                 self._task.cancel()
@@ -139,7 +142,17 @@ class ClientSession:
         else:
             await self.send({"type": "error", "error": f"unsupported message type {kind!r}"})
 
-    async def _start(self, goal: str) -> None:
+    async def _resume(self, task_id: str) -> None:
+        store = self._agent.store if self._agent is not None else None
+        task = store.task(task_id) if store is not None else None
+        if task is None:
+            await self.send({"type": "error", "error": f"no task {task_id!r}"})
+        elif task.status not in RESUMABLE:
+            await self.send({"type": "error", "error": f"task is {task.status}; nothing to resume"})
+        else:
+            await self._start(resume_goal(task), resumed_from=task.id)
+
+    async def _start(self, goal: str, resumed_from: str | None = None) -> None:
         if self._agent is None:
             await self.send({"type": "error", "error": "agent unavailable - run `jarvis doctor`"})
         elif not goal:
@@ -151,7 +164,7 @@ class ClientSession:
 
             async def run() -> None:
                 async with self._board.lock:
-                    await agent.run(goal)
+                    await agent.run(goal, resumed_from=resumed_from)
 
             self._task = asyncio.create_task(run())
             self._board.track(self._task)
