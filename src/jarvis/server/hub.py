@@ -17,18 +17,28 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 import tomli_w
+from pydantic import BaseModel
 
 from jarvis.agent.events import Event, EventSink
 from jarvis.agent.loop import Agent
+from jarvis.core.config import (
+    BudgetConfig,
+    FeaturesConfig,
+    PersonaConfig,
+    ProfileConfig,
+    Settings,
+    VoiceConfig,
+)
 from jarvis.core.config import LLMProvider as ProviderName
-from jarvis.core.config import Settings
 from jarvis.core.paths import AppPaths
 from jarvis.core.secrets import SecretName, get_secret, set_secret
 from jarvis.llm import LLMError, create_provider
 from jarvis.llm.base import LLMProvider
+from jarvis.llm.budget import SpendMeter
 from jarvis.memory.store import Store
 from jarvis.safety.policy import Approver
 from jarvis.server.session import TaskBoard
+from jarvis.voice.models import PIPER_VOICES
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +62,25 @@ def update_config_file(paths: AppPaths, changes: dict[str, dict[str, Any]]) -> N
     tmp.replace(path)
 
 
+def _deep_merge(base: dict[str, Any], changes: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for key, value in changes.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+def _play(audio: Any, device: int | str | None) -> None:
+    import sounddevice as sd
+
+    from jarvis.voice.audio import OUT_SR
+
+    sd.play(audio, OUT_SR, device=device)
+    sd.wait()
+
+
 class Hub:
     def __init__(self, settings: Settings, paths: AppPaths) -> None:
         self.settings = settings
@@ -60,6 +89,7 @@ class Hub:
         self.generation = 0
         self._provider: LLMProvider | None = None
         self._store: Store | None = None
+        self._meter: SpendMeter | None = None
         self._broadcast: Broadcast | None = None
         self._voice_task: asyncio.Task[None] | None = None
         self.voice_state = "off"
@@ -83,6 +113,14 @@ class Hub:
             await self._broadcast(event)
 
     @property
+    def meter(self) -> SpendMeter:
+        if self._meter is None:
+            from jarvis.agent.factory import open_meter
+
+            self._meter = open_meter(self.settings, self.paths)
+        return self._meter
+
+    @property
     def store(self) -> Store | None:
         if self._store is None and self.settings.memory.enabled:
             from jarvis.agent.factory import open_store
@@ -94,7 +132,7 @@ class Hub:
 
     def provider(self) -> LLMProvider:
         if self._provider is None:
-            self._provider = create_provider(self.settings.llm)
+            self._provider = create_provider(self.settings.llm, self.meter)
         return self._provider
 
     def agent_factory(self, approver: Approver, emit: EventSink) -> Agent:
@@ -134,7 +172,97 @@ class Hub:
             "voice_state": self.voice_state,
             "screen_control": self.settings.desktop.screen_control.value,
             "allowed_roots": [str(p) for p in self.settings.safety.allowed_roots],
+            "onboarded": self.settings.profile.onboarded,
+            "spend_today_usd": round(self.meter.today_usd(), 4),
+            "daily_cap_usd": self.settings.budget.daily_usd,
         }
+
+    # ------------------------------------------------------------------ settings
+
+    def settings_view(self) -> dict[str, Any]:
+        s = self.settings
+        return {
+            "profile": s.profile.model_dump(mode="json"),
+            "persona": s.persona.model_dump(mode="json"),
+            "voice": {
+                "tts_voice": s.voice.tts_voice,
+                "tts_speed": s.voice.tts_speed,
+                "activation": s.voice.activation.value,
+            },
+            "features": s.features.model_dump(mode="json"),
+            "budget": s.budget.model_dump(mode="json"),
+            "voices": sorted(k for k in PIPER_VOICES if k != "amy"),
+        }
+
+    async def update_settings(self, changes: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        """Validate, apply and persist settings changes from the UI.
+
+        Raises ValueError (pydantic ValidationError) on invalid values; nothing is
+        written unless every section validates.
+        """
+        models: dict[str, type[BaseModel]] = {
+            "profile": ProfileConfig,
+            "persona": PersonaConfig,
+            "features": FeaturesConfig,
+            "budget": BudgetConfig,
+        }
+        validated: dict[str, BaseModel] = {}
+        for section, values in changes.items():
+            if section == "voice":
+                allowed = {"tts_voice", "tts_speed", "activation"}
+                extra = set(values) - allowed
+                if extra:
+                    raise ValueError(f"voice settings not editable here: {sorted(extra)}")
+                current = self.settings.voice.model_dump(mode="json")
+                validated[section] = VoiceConfig(**{**current, **values})
+            elif section in models:
+                current = getattr(self.settings, section).model_dump(mode="json")
+                validated[section] = models[section](**_deep_merge(current, values))
+            else:
+                raise ValueError(f"unknown settings section {section!r}")
+
+        for section, model in validated.items():
+            data = model.model_dump(mode="json", exclude_none=True)
+            if section == "voice":
+                data = {k: data[k] for k in ("tts_voice", "tts_speed", "activation")}
+            update_config_file(self.paths, {section: data})
+            # Update in place: providers and meters hold references to these objects.
+            target = getattr(self.settings, section)
+            for field in type(model).model_fields:
+                setattr(target, field, getattr(model, field))
+
+        if validated:
+            self.generation += 1  # sessions rebuild agents with the new persona/profile
+            if self.voice_running and set(validated) & {"voice", "persona", "profile"}:
+                await self.stop_voice()
+                await self.start_voice()
+        return self.settings_view()
+
+    async def preview_voice(self, voice: str, speed: float) -> None:
+        """Say a short sample in the chosen voice (downloading it first if needed)."""
+        from jarvis.voice.models import piper_files
+        from jarvis.voice.runtime import model_store
+        from jarvis.voice.speech import PiperTTS
+
+        VoiceConfig(tts_voice=voice, tts_speed=speed)  # validate
+        store = model_store(self.paths)
+        files = piper_files(voice)
+        if store.missing(files):
+            loop = asyncio.get_running_loop()
+
+            def progress(name: str, done: int, total: int) -> None:
+                event = {"type": "setup.progress", "file": name, "done": done, "total": total}
+                loop.call_soon_threadsafe(lambda: self._spawn(self.broadcast(event)))
+
+            await asyncio.to_thread(store.fetch, files, progress)
+        who = self.settings.profile.addressee()
+        greeting = f"Hello, {who}." if who else "Hello."
+        tts = PiperTTS(store.path(files[0]), speed)
+        try:
+            audio = await tts.synthesize(f"{greeting} This is how I will sound. All systems ready.")
+        finally:
+            tts.close()
+        await asyncio.to_thread(_play, audio, self.settings.voice.output_device)
 
     async def set_api_key(self, key: str) -> None:
         """Validate the key against the API before storing it."""

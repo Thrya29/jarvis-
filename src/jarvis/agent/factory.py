@@ -14,6 +14,7 @@ from jarvis.core.paths import AppPaths
 from jarvis.desktop.session import DesktopSession
 from jarvis.llm import create_provider
 from jarvis.llm.base import LLMProvider
+from jarvis.llm.budget import SpendMeter
 from jarvis.memory.store import Store
 from jarvis.safety.policy import Approver, PathGuard
 from jarvis.tools.base import Tool, ToolContext, ToolRegistry
@@ -33,6 +34,11 @@ def all_tools(desktop: bool = False, memory: bool = False) -> list[Tool[Any]]:
     if desktop:
         tools += DESKTOP_TOOLS
     return tools
+
+
+def open_meter(settings: Settings, paths: AppPaths) -> SpendMeter:
+    """Daily API spend tracking (shared across JARVIS processes via SQLite)."""
+    return SpendMeter(settings.budget, paths.data_dir / "usage.db")
 
 
 def open_store(settings: Settings, paths: AppPaths) -> Store | None:
@@ -83,7 +89,7 @@ def build_agent(
         desktop=build_desktop(settings),
         store=store if store is not None else open_store(settings, paths),
     )
-    provider = provider or create_provider(settings.llm)
+    provider = provider or create_provider(settings.llm, open_meter(settings, paths))
     tools = all_tools(desktop=ctx.desktop is not None, memory=ctx.store is not None)
     agent = Agent(provider, ToolRegistry(tools), ctx, settings.agent, emit)
     return agent, provider

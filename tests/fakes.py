@@ -42,7 +42,7 @@ class ScriptedConversation:
     def add_tool_results(self, results: list[ToolOutcome]) -> None:
         self.history.append(("tool_results", results))
 
-    async def step(self) -> TurnResult:
+    async def step(self, on_delta: Any = None) -> TurnResult:
         if not self.script:
             raise AssertionError("script exhausted")
         item = self.script.pop(0)
@@ -70,6 +70,7 @@ class ScriptedProvider:
         self.system = ""
         self.supports_computer_use = supports_computer_use
         self.computer_use = False
+        self.quick: Any = None
 
     def new_conversation(
         self, system: str, tools: list[ToolSpec], computer_use: bool = False

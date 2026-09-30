@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 OWW = "https://github.com/dscripka/openWakeWord/releases/download/v0.5.1"
 PIPER_REV = "c10ece1aade47bb51c153c893d14e5bf8e5b7117"
 PIPER = f"https://huggingface.co/rhasspy/piper-voices/resolve/{PIPER_REV}/en/en_US"
+PIPER_GB = f"https://huggingface.co/rhasspy/piper-voices/resolve/{PIPER_REV}/en/en_GB"
 
 # faster-whisper models come from Hugging Face at a pinned commit.
 WHISPER_REVISIONS = {
@@ -71,6 +72,42 @@ FILES: dict[str, ModelFile] = {
             4_885,
         ),
         ModelFile(
+            "en_GB-alan-medium.onnx",
+            f"{PIPER_GB}/alan/medium/en_GB-alan-medium.onnx",
+            "0a309668932205e762801f1efc2736cd4b0120329622adf62be09e56339d3330",
+            63_201_294,
+        ),
+        ModelFile(
+            "en_GB-alan-medium.onnx.json",
+            f"{PIPER_GB}/alan/medium/en_GB-alan-medium.onnx.json",
+            "c0f0d124e5895c00e7c03b35dcc8287f319a6998a365b182deb5c8e752ee8c1e",
+            4_888,
+        ),
+        ModelFile(
+            "en_GB-jenny_dioco-medium.onnx",
+            f"{PIPER_GB}/jenny_dioco/medium/en_GB-jenny_dioco-medium.onnx",
+            "469c630d209e139dd392a66bf4abde4ab86390a0269c1e47b4e5d7ce81526b01",
+            63_201_294,
+        ),
+        ModelFile(
+            "en_GB-jenny_dioco-medium.onnx.json",
+            f"{PIPER_GB}/jenny_dioco/medium/en_GB-jenny_dioco-medium.onnx.json",
+            "a9a7a93a317c9a3cb6563e37eb057df9ef09c06188a8a4341b0fcb58cba54dd4",
+            4_895,
+        ),
+        ModelFile(
+            "en_US-ryan-medium.onnx",
+            f"{PIPER}/ryan/medium/en_US-ryan-medium.onnx",
+            "abf4c274862564ed647ba0d2c47f8ee7c9b717d27bdad9219100eb310db4047a",
+            63_201_294,
+        ),
+        ModelFile(
+            "en_US-ryan-medium.onnx.json",
+            f"{PIPER}/ryan/medium/en_US-ryan-medium.onnx.json",
+            "44034c056cb15681b2ad494307c7f3f2e4499d1253c700c711fa0a4607ffe78d",
+            4_883,
+        ),
+        ModelFile(
             "en_US-amy-medium.onnx",
             f"{PIPER}/amy/medium/en_US-amy-medium.onnx",
             "b3a6e47b57b8c7fbe6a0ce2518161a50f59a9cdd8a50835c02cb02bdd6206c18",
@@ -86,7 +123,14 @@ FILES: dict[str, ModelFile] = {
 }
 
 WAKE_FILES = ["melspectrogram.onnx", "embedding_model.onnx", "hey_jarvis_v0.1.onnx"]
-PIPER_VOICES = {"lessac": "en_US-lessac-medium", "amy": "en_US-amy-medium"}
+# Voice choice (settings) -> Piper voice model.
+PIPER_VOICES = {
+    "british_male": "en_GB-alan-medium",
+    "british_female": "en_GB-jenny_dioco-medium",
+    "american_male": "en_US-ryan-medium",
+    "american_female": "en_US-lessac-medium",
+    "amy": "en_US-amy-medium",
+}
 
 
 class ModelError(RuntimeError):

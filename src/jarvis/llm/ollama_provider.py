@@ -10,6 +10,7 @@ import httpx2 as httpx
 
 from jarvis.core.config import OllamaConfig
 from jarvis.llm.base import (
+    DeltaSink,
     LLMError,
     StopKind,
     ToolCall,
@@ -49,7 +50,7 @@ class OllamaConversation:
                 content += "\n[image omitted: this model cannot see screenshots]"
             self.messages.append({"role": "tool", "tool_name": r.name, "content": content})
 
-    async def step(self) -> TurnResult:
+    async def step(self, on_delta: DeltaSink | None = None) -> TurnResult:
         body = {
             "model": self._cfg.model,
             "messages": self.messages,
@@ -103,6 +104,7 @@ class OllamaConversation:
 class OllamaProvider:
     name = "ollama"
     supports_computer_use = False
+    quick = None  # small local models answer everything through the agent
 
     def __init__(
         self, cfg: OllamaConfig, transport: httpx.AsyncBaseTransport | None = None

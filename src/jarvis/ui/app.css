@@ -191,3 +191,41 @@ progress { width: 100%; height: 8px; margin-top: 8px; }
   .msg { animation: fade-in 120ms ease-out; }
   @keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 }
+
+/* ---------------------------------------------------------------- wizard (v2) */
+.wizard-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.progress-dots { list-style: none; display: flex; gap: 6px; margin: 0; padding: 0; }
+.progress-dots li { width: 9px; height: 9px; border-radius: 50%; background: var(--line); }
+.progress-dots li.done { background: var(--accent-2); }
+.progress-dots li.current { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.step h2 { font-size: 18px; margin: 12px 0; }
+fieldset { border: 0; padding: 0; margin: 12px 0; }
+legend { font-weight: 600; margin-bottom: 4px; }
+.field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
+.field input, .field textarea, .inline-input {
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+}
+.field input[type="range"] { padding: 0; }
+.inline-input { padding: 4px 8px; margin-left: 6px; width: 180px; }
+.voice-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.voice-card {
+  display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 12px; background: var(--panel-2);
+}
+.voice-card label { flex: 1; display: flex; gap: 8px; align-items: center; cursor: pointer; }
+.voice-card:has(input:checked) { border-color: var(--accent); }
+.features { display: flex; flex-direction: column; gap: 2px; }
+.features > .choice { padding: 6px 0; border-top: 1px solid var(--line); margin: 0; }
+.sub { margin: 0 0 8px 28px; }
+.soon {
+  font-style: normal; font-size: 11px; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 999px; padding: 0 6px; margin-left: 6px; white-space: nowrap;
+}
+.warning { color: var(--warn); font-size: 13px; }
+.review { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+.review dt { color: var(--muted); }
+.review dd { margin: 0; overflow-wrap: anywhere; }
+.wizard-nav { display: flex; align-items: center; gap: 8px; margin-top: 24px; }
+.wizard-nav .spacer { flex: 1; }
+.msg-progress { align-self: flex-start; color: var(--muted); font-style: italic; font-size: 13px; padding: 2px 14px; }
+@media (max-width: 720px) { .voice-grid { grid-template-columns: minmax(0, 1fr); } }

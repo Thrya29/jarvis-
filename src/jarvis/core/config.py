@@ -55,6 +55,8 @@ class AnthropicConfig(BaseModel):
     timeout_s: float = Field(default=600.0, gt=0)
     # Re-run a safety-classifier refusal on Anthropic's recommended fallback model.
     server_fallback: bool = True
+    # Quick conversational replies and background work (cheaper, faster).
+    fast_model: str = "claude-haiku-4-5"
 
 
 class OllamaConfig(BaseModel):
@@ -90,6 +92,9 @@ class Activation(StrEnum):
     ALWAYS = "always"  # every utterance is for JARVIS (use in a quiet room)
 
 
+VOICE_CHOICES = {"british_male", "british_female", "american_male", "american_female", "amy"}
+
+
 class TTSEngine(StrEnum):
     PIPER = "piper"  # natural neural voice, runs locally
     SAPI = "sapi"  # Windows built-in voices, no download
@@ -103,7 +108,7 @@ class VoiceConfig(BaseModel):
     stt_model: Literal["base.en", "small.en"] = "base.en"
     stt_threads: int = Field(default=0, ge=0, le=32, description="0 = automatic")
     tts_engine: TTSEngine = TTSEngine.PIPER
-    tts_voice: str = "lessac"
+    tts_voice: str = "american_female"
     tts_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     echo_cancellation: bool = True
     # Talking while JARVIS speaks pauses it at once; real speech then replaces its turn.
@@ -119,12 +124,111 @@ class VoiceConfig(BaseModel):
     @field_validator("tts_voice")
     @classmethod
     def _known_voice(cls, v: str) -> str:
-        voices = {"lessac", "amy"}
-        if v == "af_heart":  # default written by 0.1 configs
-            return "lessac"
-        if v not in voices:
-            raise ValueError(f"tts_voice must be one of {sorted(voices)}")
+        legacy = {"af_heart": "american_female", "lessac": "american_female"}
+        v = legacy.get(v, v)
+        if v not in VOICE_CHOICES:
+            raise ValueError(f"tts_voice must be one of {sorted(VOICE_CHOICES)}")
         return v
+
+
+# ----------------------------------------------------------------------------- user profile
+
+
+class AddressMode(StrEnum):
+    SIR = "sir"
+    MAAM = "maam"
+    NAME = "name"
+    NICKNAME = "nickname"
+    NONE = "none"
+
+
+class ProfileConfig(BaseModel):
+    name: str = Field(default="", max_length=60)
+    address: AddressMode = AddressMode.NONE
+    nickname: str = Field(default="", max_length=40)
+    # Set once the user has been through the setup wizard.
+    onboarded: bool = False
+
+    def addressee(self) -> str | None:
+        """How JARVIS should address the user, or None for no form of address."""
+        if self.address is AddressMode.SIR:
+            return "sir"
+        if self.address is AddressMode.MAAM:
+            return "ma'am"
+        if self.address is AddressMode.NAME and self.name.strip():
+            return self.name.strip().split()[0]
+        if self.address is AddressMode.NICKNAME and self.nickname.strip():
+            return self.nickname.strip()
+        return None
+
+
+class PersonaStyle(StrEnum):
+    JARVIS = "jarvis"  # calm, precise, dry wit
+    PROFESSIONAL = "professional"
+    FRIENDLY = "friendly"
+    MINIMAL = "minimal"
+
+
+class PersonaConfig(BaseModel):
+    style: PersonaStyle = PersonaStyle.JARVIS
+    pushback: bool = True  # voice concerns before unwise actions
+    progress_updates: bool = True  # speak short progress notes during long tasks
+    quick_replies: bool = True  # answer small talk/questions with the fast model
+
+
+# ----------------------------------------------------------------------------- features
+# Choices made in the setup wizard. Features arriving in later versions are stored now
+# and activate when that version is installed.
+
+
+class DocumentsFeature(BaseModel):
+    enabled: bool = False
+    folders: list[Path] = Field(default_factory=list)
+
+
+class EmailFeature(BaseModel):
+    enabled: bool = False
+    provider: Literal["microsoft", "google"] = "microsoft"
+    account: Literal["personal", "work"] = "personal"
+
+
+class ProtocolsFeature(BaseModel):
+    enabled: bool = False
+    briefing_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+class HudFeature(BaseModel):
+    enabled: bool = False
+    dashboard: bool = False  # full dashboard on another monitor
+
+
+class PhoneFeature(BaseModel):
+    enabled: bool = False
+    platform: Literal["android", "iphone"] = "android"
+
+
+class SmartHomeFeature(BaseModel):
+    enabled: bool = False
+    url: str = ""  # Home Assistant address; its token lives in Credential Manager
+
+
+class FeaturesConfig(BaseModel):
+    web_research: bool = False
+    documents: DocumentsFeature = DocumentsFeature()
+    email: EmailFeature = EmailFeature()
+    protocols: ProtocolsFeature = ProtocolsFeature()
+    hud: HudFeature = HudFeature()
+    phone: PhoneFeature = PhoneFeature()
+    smart_home: SmartHomeFeature = SmartHomeFeature()
+    webcam: bool = False
+    helpers: bool = False
+
+
+class BudgetConfig(BaseModel):
+    # Estimated API spend per day (USD); 0 means no limit.
+    daily_usd: float = Field(default=5.0, ge=0, le=1000)
+    # Which model background work (briefings, triggers, helpers) uses.
+    background: Literal["fast", "main"] = "fast"
 
 
 def _default_roots() -> list[Path]:
@@ -209,6 +313,10 @@ class Settings(BaseSettings):
     agent: AgentConfig = AgentConfig()
     desktop: DesktopConfig = DesktopConfig()
     memory: MemoryConfig = MemoryConfig()
+    profile: ProfileConfig = ProfileConfig()
+    persona: PersonaConfig = PersonaConfig()
+    features: FeaturesConfig = FeaturesConfig()
+    budget: BudgetConfig = BudgetConfig()
     logging: LoggingConfig = LoggingConfig()
 
     @classmethod
