@@ -4,10 +4,11 @@ An AI control layer for Windows. Give it a goal in plain language — by voice o
 plans the steps, operates your apps, files, browser and terminal, watches the screen to verify
 each step, and reports back. Full-duplex voice means you can interrupt it mid-sentence.
 
-> **Status:** V1 in development. **M0 (foundation)**, **M1 (agent core)** and **M2 (screen
-> control)** are complete. JARVIS takes a goal, plans it, and works through files, Office
-> documents, email drafts, the shell, the web and any app on screen, under a safety layer,
-> then reports back. Full-duplex voice is next. See the [roadmap](#roadmap).
+> **Status:** V1 in development. **M0 (foundation)**, **M1 (agent core)**, **M2 (screen
+> control)** and **M3 (full-duplex voice)** are complete. Talk to JARVIS, interrupt it
+> mid-sentence, and change your instruction on the fly. It plans and works through files,
+> Office documents, email drafts, the shell, the web and any app on screen, under a safety
+> layer, and tells you what it did. See the [roadmap](#roadmap).
 
 ## Requirements
 
@@ -66,6 +67,46 @@ front-ends (M3, M5) connect to.
 | Web | `fetch_url` (public pages only), `open_url` | Yes (configurable) |
 
 File tools only work inside `safety.allowed_roots` (default: Documents, Desktop, Downloads).
+
+## Voice (M3)
+
+```powershell
+jarvis voice setup      # one-time: downloads and verifies ~130 MB of speech models
+jarvis voice say "Hello, I am Jarvis."   # checks your speakers
+jarvis voice            # hands-free session: say "Hey Jarvis, ..."
+```
+
+- **Full duplex.** The microphone stays on while JARVIS talks. WebRTC echo cancellation
+  removes JARVIS's own voice, so you can talk over it:
+  - Start speaking and it **pauses within ~160 ms**.
+  - Say "okay" or "uh-huh" and it carries on.
+  - Say "stop" and it stops.
+  - Say something new ("actually, make it a spreadsheet") and it drops what it was doing and
+    changes course in the same conversation.
+- **Wake word.** Say "Hey Jarvis". While you're in a conversation (JARVIS is working,
+  speaking, or has just finished) you don't need to repeat it. Set `voice.activation` to
+  `always` in a quiet room to skip the wake word entirely.
+- **Spoken approvals.** Risky actions are asked out loud ("Move old.txt to the Recycle Bin.
+  Should I go ahead?"). Answer yes or no. If you don't answer, the action is declined.
+- **Local speech.** Speech recognition (faster-whisper `base.en`), the voice (Piper), wake
+  word, VAD and echo cancellation all run on your CPU. Audio never leaves the PC or touches
+  the disk; only the transcribed text goes to the language model.
+- **Latency on a 4-core laptop CPU:** about 0.7 s of silence ends your turn. Transcription
+  then takes ~1–1.5 s, sped up by starting it speculatively during the pause, and speech
+  synthesis runs ~10× faster than real time.
+- **Headphones or speakers.** Echo cancellation makes speakers work. If it's unavailable,
+  JARVIS falls back to half-duplex and you should use headphones.
+- **Run with the daemon.** Set `voice.enabled = true` to start voice with `jarvis run`. It
+  shares the one-task-at-a-time lock with other clients, and Ctrl+Alt+J silences it.
+
+| Setting | Default | |
+|---|---|---|
+| `voice.activation` | `wake_word` | or `always` |
+| `voice.stt_model` | `base.en` | `small.en` is more accurate but ~3× slower |
+| `voice.tts_engine` / `tts_voice` | `piper` / `lessac` | voice `amy`, or engine `sapi` (Windows voices, no download) |
+| `voice.barge_in` | `true` | talking over JARVIS interrupts it |
+| `voice.follow_up_s` | `8` | seconds to keep listening after JARVIS speaks |
+| `voice.input_device` / `output_device` | system default | see `jarvis voice devices` |
 
 ## Screen control (M2)
 
@@ -136,7 +177,7 @@ See [SECURITY.md](SECURITY.md) and [docs/architecture.md](docs/architecture.md).
 | M0 | Foundation: config, logging, secrets, API, CLI, CI, installer | ✅ |
 | M1 | Agent core (plan → act → verify), Claude + Ollama providers, file/shell/Office/email/web tools, safety layer | ✅ |
 | M2 | Screen perception (UI Automation + screenshots), mouse/keyboard/app control, kill switch | ✅ |
-| M3 | Full-duplex voice: AEC, VAD, barge-in, streaming STT/TTS, wake word | ⏳ |
+| M3 | Full-duplex voice: echo cancellation, VAD, barge-in, local STT/TTS, wake word, spoken approvals | ✅ |
 | M4 | Long-term memory, reusable workflows, task resume | ⏳ |
 | M5 | Tray/overlay UI, first-run wizard, V1 release | ⏳ |
 

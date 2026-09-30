@@ -94,6 +94,14 @@ def build_system_prompt(
     )
 
 
-def goal_message(goal: str, now: datetime | None = None) -> str:
+VOICE_NOTE = (
+    "The user is talking to you by voice and hears your replies spoken aloud: keep them "
+    "short and conversational, with no markdown, lists, code or full file paths. Before a "
+    "long task, say in one short sentence what you're about to do."
+)
+
+
+def goal_message(goal: str, now: datetime | None = None, voice: bool = False) -> str:
     stamp = (now or datetime.now().astimezone()).strftime("%A %d %B %Y, %H:%M %Z")
-    return f"{goal}\n\n<context>Current local time: {stamp}</context>"
+    extra = f" {VOICE_NOTE}" if voice else ""
+    return f"{goal}\n\n<context>Current local time: {stamp}.{extra}</context>"
