@@ -10,6 +10,63 @@ each step, and reports back. Full-duplex voice means you can interrupt it mid-se
 > the shell, the web and any app on screen, under a safety layer, and tells you what it did.
 > See [CHANGELOG.md](CHANGELOG.md).
 
+## Quick start
+
+You need **one key: an Anthropic API key** (or nothing, if you use offline Ollama).
+
+**Get the API key:** go to [console.anthropic.com](https://console.anthropic.com), sign in,
+add a payment method under **Billing**, then open **API Keys → Create Key**. Copy the key;
+it starts with `sk-ant-`. Set a monthly spend limit under Billing so there are no
+surprises: Claude usage is billed per use.
+
+### Option A: Installer (recommended)
+
+**First time**
+1. Download `JarvisSetup-<version>.exe` from
+   [Releases](https://github.com/Thrya29/jarvis-/releases/latest) and run it. Tick **"Start
+   JARVIS in the tray when I sign in"** if you want it to start by itself every day.
+2. The setup screen opens:
+   - Choose **Claude**, paste your key, and click **Save and check**.
+   - Optional: **Download voice models (~130 MB)** for "Hey Jarvis".
+   - Click **Start using JARVIS**.
+
+**Every day**
+- If you ticked start-at-sign-in: nothing to do. JARVIS is in the tray; click the icon to
+  open it.
+- Otherwise: **Start menu → JARVIS**.
+
+### Option B: From source
+
+**First time** (PowerShell, in the repo folder):
+```powershell
+git clone https://github.com/Thrya29/jarvis-.git   # or: git pull, if you already have it
+cd jarvis-
+python -m pip install --user uv            # once per PC
+uv sync                                    # install dependencies
+uv run jarvis secret set ANTHROPIC_API_KEY # paste the key (stored in Windows Credential Manager)
+uv run jarvis voice setup                  # optional: voice models
+uv run jarvis doctor                       # everything should say OK
+```
+
+**Every day**
+```powershell
+uv run jarvis app       # window + tray (the normal way)
+```
+Or pick one of these instead:
+```powershell
+uv run jarvis chat      # text chat in the terminal
+uv run jarvis voice     # hands-free in the terminal
+uv run jarvis do "organise my Desktop PDFs into folders"   # one task, then exit
+```
+
+### Good to know
+- **Stop anything instantly:** press **Ctrl+Alt+J**.
+- **No API key?** Install [Ollama](https://ollama.com), run `ollama pull qwen2.5:3b`, and
+  choose **Ollama** in setup. It's free and offline, but much weaker and can't see the
+  screen.
+- **Something wrong?** Run `jarvis doctor` (or Start menu → **JARVIS Doctor**). It tells
+  you what's missing.
+
 ## Requirements
 
 - Windows 10 (22H2) or Windows 11, x64
