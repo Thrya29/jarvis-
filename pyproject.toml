@@ -1,6 +1,6 @@
 [project]
 name = "jarvis"
-version = "0.5.0"
+version = "1.0.0"
 description = "JARVIS - an AI control layer for Windows: voice, vision, and computer control."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -37,6 +37,7 @@ dependencies = [
     "livekit>=1.1.20",
     "numpy>=2.5.3",
     "piper-tts>=1.8.0",
+    "pystray>=0.19.5",
 ]
 
 [project.scripts]
@@ -84,6 +85,7 @@ plugins = ["pydantic.mypy"]
 module = [
     "keyring.*", "send2trash.*", "docx.*", "comtypes.*", "uiautomation.*", "mss.*",
     "onnxruntime.*", "faster_whisper.*", "soxr.*", "sounddevice.*", "piper.*", "livekit.*",
+    "pystray.*",
 ]
 ignore_missing_imports = true
 

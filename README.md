@@ -4,11 +4,11 @@ An AI control layer for Windows. Give it a goal in plain language — by voice o
 plans the steps, operates your apps, files, browser and terminal, watches the screen to verify
 each step, and reports back. Full-duplex voice means you can interrupt it mid-sentence.
 
-> **Status:** V1 in development. **M0 (foundation)**, **M1 (agent core)**, **M2 (screen
-> control)**, **M3 (full-duplex voice)** and **M4 (memory and workflows)** are complete. Talk to JARVIS, interrupt it
-> mid-sentence, and change your instruction on the fly. It plans and works through files,
-> Office documents, email drafts, the shell, the web and any app on screen, under a safety
-> layer, and tells you what it did. See the [roadmap](#roadmap).
+> **Version 1.0.** A desktop app with a tray icon, full-duplex voice, screen control,
+> memory and saved workflows. Talk to JARVIS, interrupt it mid-sentence, and change your
+> instruction on the fly. It plans and works through files, Office documents, email drafts,
+> the shell, the web and any app on screen, under a safety layer, and tells you what it did.
+> See [CHANGELOG.md](CHANGELOG.md).
 
 ## Requirements
 
@@ -22,8 +22,18 @@ each step, and reports back. Full-duplex voice means you can interrupt it mid-se
 
 ### From a release (end users)
 
-Download `JarvisSetup-<version>.exe` from the
-[Releases](https://github.com/Thrya29/jarvis-/releases) page and run it. No admin rights needed.
+1. Download `JarvisSetup-<version>.exe` from the
+   [Releases](https://github.com/Thrya29/jarvis-/releases) page and run it. It installs per
+   user, with no admin rights needed. Optionally, tick "Start JARVIS in the tray when I
+   sign in". `SHA256SUMS.txt` next to it lets you verify the download.
+2. JARVIS opens its window with a short **setup**:
+   - Choose Claude (paste an Anthropic API key, which is checked before it's saved) or
+     offline Ollama.
+   - Optionally download the voice models (~130 MB).
+3. Type a goal, or turn on **Voice** and say "Hey Jarvis, …".
+
+Closing the window keeps JARVIS in the tray. Open it again from the Start menu or the tray
+icon, whose menu also has *Voice on/off*, *Stop current task* and *Quit*.
 
 ### From source (developers)
 
@@ -35,7 +45,10 @@ uv sync
 uv run jarvis doctor
 ```
 
-## First run
+## Command line
+
+The installer can add `jarvis` to your PATH. Everything the app does is also available
+from a terminal:
 
 ```powershell
 jarvis config init                          # writes %LOCALAPPDATA%\Jarvis\Jarvis\config.toml
@@ -50,8 +63,27 @@ Or give a single goal:
 jarvis do "Organise the PDFs in Documents\Project X into folders by client, write a summary of each into a Word document, build an Excel tracker of them, and draft an email to priya@example.com with both attached"
 ```
 
-`jarvis run` starts the background daemon (`127.0.0.1:8765`) that the desktop UI and voice
-front-ends (M3, M5) connect to.
+- `jarvis app` starts the desktop app (service, tray icon and window). `jarvisw.exe` is the
+  windowless build that the Start-menu shortcut uses.
+- `jarvis run` starts the service headless on `127.0.0.1:8765`, for scripting or a server
+  install.
+
+## Desktop app (M5)
+
+- **Window.** Microsoft Edge in app mode (it ships with Windows) shows the local UI:
+  - the conversation;
+  - the live plan checklist and an activity feed;
+  - approval and question dialogs;
+  - history with **Resume**, memory, and workflows with **Run**;
+  - a voice toggle and a **Stop** button.
+
+  It uses its own browser profile, separate from your normal browsing.
+- **Tray icon.** Open, Voice on/off, Stop current task, and Quit. JARVIS keeps running when
+  the window is closed.
+- **Voice tasks show up in the window too**, with 🎙 and 🔊 marks, so you can watch what
+  JARVIS is doing while you talk to it.
+- **One instance.** Launching again just brings the window up. The autostart launch stays
+  in the tray.
 
 ## What JARVIS can do (M1)
 
@@ -203,7 +235,7 @@ See [SECURITY.md](SECURITY.md) and [docs/architecture.md](docs/architecture.md).
 | M2 | Screen perception (UI Automation + screenshots), mouse/keyboard/app control, kill switch | ✅ |
 | M3 | Full-duplex voice: echo cancellation, VAD, barge-in, local STT/TTS, wake word, spoken approvals | ✅ |
 | M4 | Long-term memory, reusable workflows, task history and resume | ✅ |
-| M5 | Tray/overlay UI, first-run wizard, V1 release | ⏳ |
+| M5 | Desktop app (window + tray), first-run setup, installer, V1 release | ✅ |
 
 ## Development
 

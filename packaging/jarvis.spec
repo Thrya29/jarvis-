@@ -1,5 +1,10 @@
-# PyInstaller spec - builds dist/jarvis/jarvis.exe (one-folder, fast startup).
-# Usage: uv run pyinstaller packaging/jarvis.spec --noconfirm
+# PyInstaller spec - builds dist/jarvis/ (one-folder, fast startup) with two launchers
+# sharing the same runtime:
+#   jarvis.exe   console app (CLI: jarvis doctor / chat / voice / ...)
+#   jarvisw.exe  windowless app (Start menu, tray, autostart: `jarvisw app`)
+# Usage: uv run python packaging/make_version_info.py
+#        uv run python packaging/make_icon.py
+#        uv run pyinstaller packaging/jarvis.spec --noconfirm
 # ruff: noqa
 from PyInstaller.utils.hooks import (
     collect_data_files,
@@ -13,15 +18,17 @@ hiddenimports = (
     + collect_submodules("jarvis")
     + collect_submodules("comtypes")
     + collect_submodules("uiautomation")
-    + collect_submodules("jarvis.voice")
     + collect_submodules("piper")
+    + collect_submodules("pystray")
     + ["keyring.backends.Windows", "win32com.client", "pythoncom", "mss", "PIL.PngImagePlugin"]
     + ["sounddevice", "soxr", "ctranslate2", "livekit.rtc"]
 )
-# python-docx ships its default template as package data; anthropic reads its own metadata.
 datas = (
-    copy_metadata("jarvis")
+    # The desktop UI (HTML/CSS/JS), served by the daemon.
+    [("../src/jarvis/ui", "jarvis/ui")]
+    + copy_metadata("jarvis")
     + copy_metadata("anthropic")
+    # python-docx ships its default template as package data.
     + collect_data_files("docx")
     # uiautomation ships helper DLLs next to its modules.
     + collect_data_files("uiautomation", include_py_files=False)
@@ -48,14 +55,27 @@ a = Analysis(
     noarchive=False,
 )
 pyz = PYZ(a.pure)
-exe = EXE(
-    pyz,
-    a.scripts,
-    [],
-    exclude_binaries=True,
+
+
+def launcher(name, console):
+    return EXE(
+        pyz,
+        a.scripts,
+        [],
+        exclude_binaries=True,
+        name=name,
+        console=console,
+        upx=False,
+        icon="jarvis.ico",
+        version="version_info.txt",
+    )
+
+
+coll = COLLECT(
+    launcher("jarvis", console=True),
+    launcher("jarvisw", console=False),
+    a.binaries,
+    a.datas,
     name="jarvis",
-    console=True,
     upx=False,
-    version="version_info.txt",
 )
-coll = COLLECT(exe, a.binaries, a.datas, name="jarvis", upx=False)

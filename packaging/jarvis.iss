@@ -1,15 +1,16 @@
 ; Inno Setup script - builds JarvisSetup-<version>.exe from dist\jarvis.
-; Usage: iscc /DAppVersion=0.1.0 packaging\jarvis.iss
+; Usage: iscc /DAppVersion=1.0.0 packaging\jarvis.iss
 ; Per-user install: no admin rights required.
 
 #ifndef AppVersion
-  #error AppVersion must be defined, e.g. /DAppVersion=0.1.0
+  #error AppVersion must be defined, e.g. /DAppVersion=1.0.0
 #endif
 
 [Setup]
 AppId={{6C1F0E5B-3F7A-4E0B-9E5C-4A7D2B8F9A11}
 AppName=JARVIS
 AppVersion={#AppVersion}
+AppVerName=JARVIS {#AppVersion}
 AppPublisher=Thrya29
 AppPublisherURL=https://github.com/Thrya29/jarvis-
 DefaultDirName={localappdata}\Programs\Jarvis
@@ -18,26 +19,38 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=Output
 OutputBaseFilename=JarvisSetup-{#AppVersion}
+SetupIconFile=jarvis.ico
+UninstallDisplayIcon={app}\jarvisw.exe
 Compression=lzma2/max
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.19045
 ChangesEnvironment=yes
+; Close a running JARVIS before upgrading its files.
+CloseApplications=force
+RestartApplications=no
 WizardStyle=modern
 UninstallDisplayName=JARVIS
 
 [Tasks]
-Name: "addtopath"; Description: "Add jarvis to my PATH"; Flags: checkedonce
-Name: "autostart"; Description: "Start JARVIS when I sign in"; Flags: unchecked
+Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
+Name: "autostart"; Description: "Start JARVIS in the tray when I sign in"; Flags: unchecked
+Name: "addtopath"; Description: "Add the jarvis command to my PATH"; Flags: checkedonce
 
 [Files]
 Source: "..\dist\jarvis\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; Remove files from older versions that are no longer shipped.
+Type: filesandordirs; Name: "{app}\_internal"
+
 [Icons]
-Name: "{group}\JARVIS"; Filename: "{app}\jarvis.exe"; Parameters: "run"
+Name: "{group}\JARVIS"; Filename: "{app}\jarvisw.exe"; Parameters: "app"; IconFilename: "{app}\jarvisw.exe"
 Name: "{group}\JARVIS Doctor"; Filename: "{cmd}"; Parameters: "/k ""{app}\jarvis.exe"" doctor"
-Name: "{userstartup}\JARVIS"; Filename: "{app}\jarvis.exe"; Parameters: "run"; Tasks: autostart
+Name: "{group}\Uninstall JARVIS"; Filename: "{uninstallexe}"
+Name: "{userdesktop}\JARVIS"; Filename: "{app}\jarvisw.exe"; Parameters: "app"; Tasks: desktopicon
+Name: "{userstartup}\JARVIS"; Filename: "{app}\jarvisw.exe"; Parameters: "app --minimized"; Tasks: autostart
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; \
@@ -45,6 +58,13 @@ Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; \
 
 [Run]
 Filename: "{app}\jarvis.exe"; Parameters: "config init"; Flags: runhidden
+Filename: "{app}\jarvisw.exe"; Parameters: "app"; Description: "Start JARVIS"; \
+  Flags: postinstall nowait skipifsilent
+
+[UninstallRun]
+; Stop a running JARVIS so its files can be removed (user data is kept).
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM jarvisw.exe /T"; Flags: runhidden; RunOnceId: "StopJarvisw"
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM jarvis.exe /T"; Flags: runhidden; RunOnceId: "StopJarvis"
 
 [Code]
 function NeedsAddPath(Dir: string): Boolean;

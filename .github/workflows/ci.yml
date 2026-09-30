@@ -33,7 +33,7 @@ jobs:
     name: Build executable
     needs: check
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -42,6 +42,7 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - run: uv run python packaging/make_version_info.py
+      - run: uv run python packaging/make_icon.py
       - run: uv run pyinstaller packaging/jarvis.spec --noconfirm --distpath dist --workpath build
       - name: Smoke test frozen build
         shell: pwsh
@@ -58,8 +59,34 @@ jobs:
           "import docx, openpyxl, pypdf, mss, PIL, uiautomation, faster_whisper, ctranslate2, onnxruntime, piper, soxr, livekit.rtc`nfrom jarvis.voice.vad import SileroVAD; SileroVAD()`ndocx.Document().save(r'$doc')`nprint('ok')" | Set-Content -Encoding utf8 $script
           ./dist/jarvis/jarvis.exe _pyexec $script
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path $doc)) { exit 1 }
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = uv run python packaging/make_version_info.py
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc /DAppVersion=$version packaging\jarvis.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Install, run and uninstall
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem packaging\Output\JarvisSetup-*.exe | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP "jarvis-install"
+          $p = Start-Process $setup.FullName -Wait -PassThru -ArgumentList `
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=`"$dir`"", "/TASKS="
+          if ($p.ExitCode -ne 0) { Write-Error "installer exit $($p.ExitCode)"; exit 1 }
+          foreach ($exe in "jarvis.exe", "jarvisw.exe") {
+            if (-not (Test-Path (Join-Path $dir $exe))) { Write-Error "$exe missing"; exit 1 }
+          }
+          & (Join-Path $dir "jarvis.exe") version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $u = Start-Process (Join-Path $dir "unins000.exe") -Wait -PassThru -ArgumentList `
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
+          if ($u.ExitCode -ne 0 -or (Test-Path (Join-Path $dir "jarvis.exe"))) {
+            Write-Error "uninstall failed"; exit 1
+          }
       - uses: actions/upload-artifact@v7
         with:
-          name: jarvis-windows-x64
-          path: dist/jarvis
+          name: JarvisSetup-windows-x64
+          path: packaging/Output/JarvisSetup-*.exe
           retention-days: 7

@@ -113,7 +113,7 @@ async def voice_session(
     log_line: Callable[[str], None],
     board: Any | None = None,
     extra_sink: Callable[[dict[str, Any]], Any] | None = None,
-    on_ready: Callable[[VoiceRuntime], None] | None = None,
+    on_ready: Callable[[VoiceRuntime], object] | None = None,
 ) -> None:
     """Run a voice session until cancelled. Shared by `jarvis voice` and the daemon."""
     from jarvis.agent.factory import build_agent

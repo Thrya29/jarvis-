@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JARVIS</title>
+  <link rel="icon" href="/ui/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/ui/app.css">
+  <script src="/ui/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><img src="/ui/icon.svg" alt="" width="26" height="26"><span>JARVIS</span></div>
+    <div class="status">
+      <span id="conn" class="pill pill-muted" title="Connection to the JARVIS service">connecting…</span>
+      <span id="model" class="pill pill-muted" title="Language model"></span>
+      <button id="voiceToggle" class="pill pill-button" type="button" title="Hands-free voice (say “Hey Jarvis”)">Voice: off</button>
+    </div>
+    <div class="actions">
+      <button id="stopBtn" class="btn btn-danger" type="button" hidden title="Stop everything (also Ctrl+Alt+J)">Stop</button>
+      <button id="setupBtn" class="btn btn-ghost" type="button">Setup</button>
+    </div>
+  </header>
+
+  <main class="layout" id="app">
+    <aside class="panel side" aria-label="History, memory and workflows">
+      <nav class="tabs" role="tablist">
+        <button role="tab" class="tab active" data-tab="history" aria-selected="true">History</button>
+        <button role="tab" class="tab" data-tab="memory" aria-selected="false">Memory</button>
+        <button role="tab" class="tab" data-tab="workflows" aria-selected="false">Workflows</button>
+      </nav>
+      <div class="tabpane" id="tab-history"><ul id="historyList" class="list"></ul></div>
+      <div class="tabpane" id="tab-memory" hidden><ul id="memoryList" class="list"></ul></div>
+      <div class="tabpane" id="tab-workflows" hidden><ul id="workflowList" class="list"></ul></div>
+    </aside>
+
+    <section class="chat" aria-label="Conversation">
+      <div id="log" class="log" aria-live="polite">
+        <div id="welcome" class="welcome">
+          <h1>What can I do for you?</h1>
+          <p>Give me a goal in plain language. I plan it, work through your files, apps and the web, and ask before anything risky.</p>
+          <div class="examples">
+            <button class="example" type="button">Organise the PDFs on my Desktop into folders by topic</button>
+            <button class="example" type="button">Make an Excel tracker of the files I changed this week</button>
+            <button class="example" type="button">Open Notepad and write a to-do list for tomorrow</button>
+          </div>
+        </div>
+      </div>
+      <form id="composer" class="composer" autocomplete="off">
+        <textarea id="goal" rows="1" placeholder="Tell JARVIS what to do…  (Enter to send, Shift+Enter for a new line)" aria-label="Goal"></textarea>
+        <button id="sendBtn" class="btn btn-primary" type="submit">Send</button>
+      </form>
+    </section>
+
+    <aside class="panel plan" aria-label="Plan and activity">
+      <h2>Plan</h2>
+      <ol id="planList" class="plan-list"><li class="empty">No task running.</li></ol>
+      <h2>Activity</h2>
+      <ul id="activity" class="activity"></ul>
+    </aside>
+  </main>
+
+  <section id="setup" class="setup" hidden aria-label="Setup">
+    <div class="card">
+      <h1>Set up JARVIS</h1>
+      <ol class="steps">
+        <li>
+          <h2>1. Choose the AI model</h2>
+          <label class="choice"><input type="radio" name="provider" value="anthropic" checked>
+            <span><strong>Claude</strong> (recommended) — best at planning and operating your screen. Needs an Anthropic API key.</span></label>
+          <label class="choice"><input type="radio" name="provider" value="ollama">
+            <span><strong>Ollama</strong> — fully offline, runs on this PC. Much weaker at long tasks; no screen vision.</span></label>
+          <div id="claudeFields" class="fields">
+            <input id="apiKey" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" aria-label="Anthropic API key">
+            <p class="hint">Stored in Windows Credential Manager, never in a file. Get one at console.anthropic.com.</p>
+          </div>
+          <div id="ollamaFields" class="fields" hidden>
+            <input id="ollamaModel" type="text" value="qwen2.5:3b" aria-label="Ollama model">
+            <p class="hint">Install Ollama and run <code>ollama pull qwen2.5:3b</code> first.</p>
+          </div>
+          <button id="saveModel" class="btn btn-primary" type="button">Save and check</button>
+          <p id="modelResult" class="result" role="status"></p>
+        </li>
+        <li>
+          <h2>2. Voice (optional)</h2>
+          <p>Talk to JARVIS hands-free and interrupt it any time. Speech is processed on this PC; only the recognised text goes to the model.</p>
+          <button id="getVoice" class="btn" type="button">Download voice models (~130 MB)</button>
+          <progress id="voiceProgress" max="100" value="0" hidden></progress>
+          <p id="voiceResult" class="result" role="status"></p>
+          <label class="choice"><input id="voiceOnSetup" type="checkbox"> <span>Start listening for “Hey Jarvis” now</span></label>
+        </li>
+        <li>
+          <h2>3. Safety</h2>
+          <p class="hint">JARVIS only touches files in: <span id="roots"></span>. It asks before deleting, overwriting, running commands, web requests and anything on screen. Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>J</kbd> to stop it instantly.</p>
+        </li>
+      </ol>
+      <div class="setup-actions">
+        <button id="finishSetup" class="btn btn-primary" type="button" disabled>Start using JARVIS</button>
+      </div>
+    </div>
+  </section>
+
+  <dialog id="approvalDlg" class="dialog" aria-labelledby="approvalTitle">
+    <form method="dialog">
+      <p class="risk" id="approvalRisk"></p>
+      <h2 id="approvalTitle">Allow this?</h2>
+      <p id="approvalSummary" class="summary"></p>
+      <pre id="approvalDetails" class="details" hidden></pre>
+      <input id="approvalNote" type="text" placeholder="Optional note (e.g. why not, or what to do instead)" aria-label="Note">
+      <div class="dialog-actions">
+        <button value="deny" class="btn" type="submit">Don't allow</button>
+        <button value="allow" class="btn btn-primary" type="submit" autofocus>Allow</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="askDlg" class="dialog" aria-labelledby="askTitle">
+    <form method="dialog">
+      <h2 id="askTitle">JARVIS asks</h2>
+      <p id="askQuestion" class="summary"></p>
+      <input id="askAnswer" type="text" aria-label="Your answer">
+      <div class="dialog-actions">
+        <button value="skip" class="btn" type="submit">Skip</button>
+        <button value="answer" class="btn btn-primary" type="submit">Answer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="paramsDlg" class="dialog" aria-labelledby="paramsTitle">
+    <form method="dialog">
+      <h2 id="paramsTitle">Run workflow</h2>
+      <div id="paramsFields"></div>
+      <div class="dialog-actions">
+        <button value="cancel" class="btn" type="submit">Cancel</button>
+        <button value="run" class="btn btn-primary" type="submit">Run</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="alert" hidden></div>
+</body>
+</html>

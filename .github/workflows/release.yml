@@ -31,15 +31,35 @@ jobs:
           }
           "version=$version" >> $env:GITHUB_OUTPUT
 
+      - run: uv run python packaging/make_icon.py
       - run: uv run pyinstaller packaging/jarvis.spec --noconfirm --distpath dist --workpath build
 
       - name: Build installer
         shell: pwsh
         run: |
+          $version = uv run python packaging/make_version_info.py
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
-          & $iscc /DAppVersion=${{ steps.version.outputs.version }} packaging\jarvis.iss
+          & $iscc /DAppVersion=$version packaging\jarvis.iss
           if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Install, run and uninstall
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem packaging\Output\JarvisSetup-*.exe | Select-Object -First 1
+          $dir = Join-Path $env:RUNNER_TEMP "jarvis-install"
+          $p = Start-Process $setup.FullName -Wait -PassThru -ArgumentList `
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=`"$dir`"", "/TASKS="
+          if ($p.ExitCode -ne 0) { Write-Error "installer exit $($p.ExitCode)"; exit 1 }
+          foreach ($exe in "jarvis.exe", "jarvisw.exe") {
+            if (-not (Test-Path (Join-Path $dir $exe))) { Write-Error "$exe missing"; exit 1 }
+          }
+          & (Join-Path $dir "jarvis.exe") version
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $u = Start-Process (Join-Path $dir "unins000.exe") -Wait -PassThru -ArgumentList `
+            "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
+          if ($u.ExitCode -ne 0 -or (Test-Path (Join-Path $dir "jarvis.exe"))) {
+            Write-Error "uninstall failed"; exit 1
+          }
 
       - name: Checksums
         shell: pwsh

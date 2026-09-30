@@ -16,6 +16,7 @@ from fastapi import WebSocket
 
 from jarvis.agent.events import Event, EventSink
 from jarvis.agent.loop import Agent
+from jarvis.llm.base import LLMError
 from jarvis.memory.store import RESUMABLE, resume_goal
 from jarvis.safety.policy import ApprovalDecision, ApprovalRequest, Approver
 
@@ -113,13 +114,42 @@ class TaskBoard:
 
 
 class ClientSession:
-    def __init__(self, ws: WebSocket, factory: AgentFactory | None, board: TaskBoard):
+    """One connected UI/client. Its agent (conversation) is created on first use, and
+    rebuilt when ``generation()`` changes (e.g. after the API key or model changed)."""
+
+    def __init__(
+        self,
+        ws: WebSocket,
+        factory: AgentFactory | None,
+        board: TaskBoard,
+        generation: Callable[[], int] = lambda: 0,
+    ):
         self._ws = ws
         self._send_lock = asyncio.Lock()
         self._board = board
+        self._factory = factory
+        self._generation = generation
+        self._agent_gen = -1
         self.approver = WebSocketApprover(self.send)
-        self._agent = factory(self.approver, self.send) if factory else None
+        self._agent: Agent | None = None
         self._task: asyncio.Task[None] | None = None
+
+    async def _get_agent(self) -> Agent | None:
+        if self._factory is None:
+            await self.send({"type": "error", "error": "agent unavailable - run `jarvis doctor`"})
+            return None
+        gen = self._generation()
+        if self._agent is None or self._agent_gen != gen:
+            if self._agent is not None:
+                self._agent.close()
+                self._agent = None
+            try:
+                self._agent = self._factory(self.approver, self.send)
+            except LLMError as exc:
+                await self.send({"type": "error", "error": str(exc), "setup_required": True})
+                return None
+            self._agent_gen = gen
+        return self._agent
 
     async def send(self, message: Event) -> None:
         async with self._send_lock:
@@ -143,7 +173,10 @@ class ClientSession:
             await self.send({"type": "error", "error": f"unsupported message type {kind!r}"})
 
     async def _resume(self, task_id: str) -> None:
-        store = self._agent.store if self._agent is not None else None
+        agent = await self._get_agent()
+        store = agent.store if agent is not None else None
+        if agent is None:
+            return
         task = store.task(task_id) if store is not None else None
         if task is None:
             await self.send({"type": "error", "error": f"no task {task_id!r}"})
@@ -153,14 +186,11 @@ class ClientSession:
             await self._start(resume_goal(task), resumed_from=task.id)
 
     async def _start(self, goal: str, resumed_from: str | None = None) -> None:
-        if self._agent is None:
-            await self.send({"type": "error", "error": "agent unavailable - run `jarvis doctor`"})
-        elif not goal:
+        if not goal:
             await self.send({"type": "error", "error": "goal is empty"})
         elif self._board.busy:
             await self.send({"type": "error", "error": "another task is already running"})
-        else:
-            agent = self._agent
+        elif (agent := await self._get_agent()) is not None:
 
             async def run() -> None:
                 async with self._board.lock:
