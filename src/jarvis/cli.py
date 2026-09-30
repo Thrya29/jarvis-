@@ -48,6 +48,20 @@ def _load_or_exit() -> Settings:
         raise SystemExit(2) from exc
 
 
+def cmd_app(args: argparse.Namespace, paths: AppPaths) -> int:
+    """Desktop app: service + tray icon + window (what the Start-menu shortcut runs)."""
+    from jarvis.server.daemon import serve
+
+    settings = _load_or_exit()
+    # Windowed builds have no console; log to file only.
+    configure_logging(settings.logging, paths.log_dir, console=False)
+    try:
+        return serve(settings, paths, desktop=True, show=not args.minimized)
+    except AlreadyRunningError as exc:
+        log.error("%s", exc)
+        return 3
+
+
 def cmd_run(args: argparse.Namespace, paths: AppPaths) -> int:
     from jarvis.server.daemon import run_daemon
 
@@ -481,7 +495,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jarvis", description="JARVIS - AI control layer")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("run", help="start the JARVIS daemon").set_defaults(func=cmd_run)
+    sub.add_parser("run", help="start the JARVIS service (headless)").set_defaults(func=cmd_run)
+    p_app = sub.add_parser("app", help="start the desktop app (tray icon + window)")
+    p_app.add_argument("--minimized", action="store_true", help="start in the tray only")
+    p_app.set_defaults(func=cmd_app)
     sub.add_parser("doctor", help="diagnose the installation").set_defaults(func=cmd_doctor)
     sub.add_parser("version", help="print version").set_defaults(func=cmd_version)
 

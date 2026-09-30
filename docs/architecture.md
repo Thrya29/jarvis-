@@ -109,6 +109,34 @@ Failures come back to the model as error results; they never crash the task.
 - Every model gets the UI Automation tools. Text-only local models can operate standard apps
   through them; they don't get pixel control.
 
+## Desktop app
+
+```
+jarvisw.exe app ─┬─ uvicorn (asyncio) ── FastAPI: /v1/* REST, /v1/ws, / + /ui/* static UI
+                 │        └─ Hub: provider (lazy), store, voice task, broadcast to all clients
+                 ├─ tray thread (pystray): Open · Voice · Stop · Quit
+                 └─ opens msedge --app=http://127.0.0.1:8765/#token=… (own profile)
+```
+
+- **The UI** is plain HTML/CSS/JS in `src/jarvis/ui`, with no build step and no external
+  resources.
+  - It renders everything with `textContent`, never `innerHTML`.
+  - It runs under a strict CSP: `script-src 'self'`, no inline scripts, no framing.
+- **The token** is passed in the URL fragment, so it never reaches the server or its logs.
+  The UI keeps it in `sessionStorage` and removes it from the address bar.
+- **REST endpoints**:
+  - `GET /v1/status` (with setup state)
+  - `GET /v1/tasks`
+  - `GET` and `DELETE /v1/memories`, `/v1/workflows`
+  - `POST /v1/setup/api-key` (validated against the API before it's stored)
+  - `POST /v1/setup/provider`, `POST /v1/setup/voice-models` (progress over the WebSocket)
+  - `POST /v1/voice`, `POST /v1/stop`
+- **Agents are created lazily** per WebSocket session and rebuilt when `Hub.generation`
+  changes, for example after a new API key or model. So the app can start before setup is
+  done.
+- **Broadcasting.** The hub sends voice-initiated task events, voice state and setup progress
+  to every connected client.
+
 ## Memory, workflows and the task journal
 
 `memory/store.py` keeps one SQLite database (WAL mode) with three parts:
