@@ -1,6 +1,6 @@
-// JARVIS desktop UI. Talks to the local daemon: REST for data, WebSocket for tasks.
-// Every piece of data is rendered with textContent - never innerHTML - so nothing a
-// task produces (file names, web text, model output) can inject markup or script.
+// JARVIS desktop UI. Talks to the local daemon: REST for data/settings, WebSocket for
+// tasks. Every piece of data is rendered with textContent - never innerHTML - so
+// nothing a task produces (file names, web text, model output) can inject markup.
 "use strict";
 
 (() => {
@@ -21,14 +21,12 @@
     if (text !== undefined) n.textContent = text;
     return n;
   };
-
-  const state = {
-    ws: null,
-    retry: 0,
-    busy: false,
-    status: null,
-    lastUserGoal: "",
+  const radio = (name) => document.querySelector(`input[name="${name}"]:checked`)?.value;
+  const setRadio = (name, value) => {
+    for (const r of document.querySelectorAll(`input[name="${name}"]`)) r.checked = r.value === value;
   };
+
+  const state = { ws: null, retry: 0, busy: false, status: null, settings: null, streaming: null };
 
   // ------------------------------------------------------------------ REST
   async function api(path, options = {}) {
@@ -41,11 +39,15 @@
     });
     if (!res.ok) {
       let detail = res.statusText;
-      try { detail = (await res.json()).detail || detail; } catch { /* not JSON */ }
+      try {
+        const body = await res.json();
+        detail = typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail);
+      } catch { /* not JSON */ }
       throw new Error(detail);
     }
     return res.status === 204 ? null : res.json();
   }
+  const post = (path, body) => api(path, { method: "POST", body: body ? JSON.stringify(body) : undefined });
 
   // ------------------------------------------------------------------ toast
   let toastTimer = 0;
@@ -58,16 +60,31 @@
   }
 
   // ------------------------------------------------------------------ chat log
-  function hideWelcome() { $("welcome").hidden = true; }
-
   function addMessage(kind, text, source) {
-    hideWelcome();
+    $("welcome").hidden = true;
     const m = el("div", `msg msg-${kind}`);
     if (source) m.append(el("span", "source", source));
-    m.append(document.createTextNode(text));
+    const body = el("span", "body", text);
+    m.append(body);
     $("log").append(m);
     m.scrollIntoView({ block: "end" });
     return m;
+  }
+
+  function streamDelta(text, voice) {
+    if (!state.streaming) state.streaming = addMessage("assistant", "", voice ? "🔊 JARVIS" : undefined);
+    const body = state.streaming.querySelector(".body");
+    body.textContent += text;
+    state.streaming.scrollIntoView({ block: "end" });
+  }
+
+  function finishStream(fullText) {
+    if (state.streaming) {
+      state.streaming.querySelector(".body").textContent = fullText;
+      state.streaming = null;
+      return true;
+    }
+    return false;
   }
 
   // ------------------------------------------------------------------ plan + activity
@@ -88,13 +105,11 @@
   }
 
   function activity(text, failed) {
-    const li = el("li", failed ? "fail" : "", text);
     const list = $("activity");
-    list.prepend(li);
+    list.prepend(el("li", failed ? "fail" : "", text));
     while (list.children.length > 60) list.lastChild.remove();
   }
 
-  // ------------------------------------------------------------------ busy state
   function setBusy(busy) {
     state.busy = busy;
     $("stopBtn").hidden = !busy;
@@ -118,8 +133,7 @@
         addMessage("error", "This window isn't authorised. Open JARVIS from the Start menu or tray icon.");
         return;
       }
-      const delay = Math.min(10000, 500 * 2 ** state.retry++);
-      setTimeout(connect, delay);
+      setTimeout(connect, Math.min(10000, 500 * 2 ** state.retry++));
     };
   }
 
@@ -150,16 +164,30 @@
         break;
       case "task.started":
         setBusy(true);
+        state.streaming = null;
         renderPlan([]);
         if (voice) addMessage("user", msg.goal, "🎙 said");
         break;
       case "plan.updated":
         renderPlan(msg.steps);
         break;
+      case "assistant.delta":
+        streamDelta(msg.text, voice);
+        break;
+      case "assistant.discard":
+        if (state.streaming) { state.streaming.remove(); state.streaming = null; }
+        break;
       case "assistant.text":
-        addMessage("assistant", msg.text, voice ? "🔊 JARVIS" : undefined);
+        if (!(msg.streamed && finishStream(msg.text))) {
+          addMessage("assistant", msg.text, voice ? "🔊 JARVIS" : undefined);
+        }
+        break;
+      case "assistant.progress":
+        state.streaming = null;
+        addMessage("progress", msg.text);
         break;
       case "tool.started":
+        state.streaming = null;
         activity(`… ${msg.tool}`);
         break;
       case "tool.finished":
@@ -167,8 +195,10 @@
         break;
       case "task.finished":
         setBusy(false);
+        state.streaming = null;
         onFinished(msg);
         refreshLists();
+        refreshStatus();
         break;
       case "approval.request":
         showApproval(msg);
@@ -191,10 +221,9 @@
       case "setup.error":
         $("voiceResult").textContent = msg.error;
         $("voiceResult").className = "result bad";
-        $("getVoice").disabled = false;
         break;
       case "error":
-        if (msg.setup_required) openSetup();
+        if (msg.setup_required) openWizard(3);
         addMessage("error", msg.error);
         break;
       default:
@@ -203,17 +232,17 @@
   }
 
   function onFinished(msg) {
-    const labels = {
-      completed: null,
+    const notes = {
       cancelled: "Stopped.",
       failed: `Failed: ${msg.summary}`,
       refused: msg.summary,
       limit_reached: msg.summary,
     };
-    const note = labels[msg.status];
-    if (note) addMessage("system", note);
-    const u = msg.usage || {};
-    activity(`■ ${msg.status} - ${msg.tool_calls} tool calls, ${(u.input_tokens || 0).toLocaleString()} in / ${(u.output_tokens || 0).toLocaleString()} out tokens`);
+    if (notes[msg.status]) addMessage("system", notes[msg.status]);
+    if (msg.tool_calls) {
+      const u = msg.usage || {};
+      activity(`■ ${msg.status} - ${msg.tool_calls} tool calls, ${(u.input_tokens || 0).toLocaleString()} in / ${(u.output_tokens || 0).toLocaleString()} out tokens`);
+    }
   }
 
   // ------------------------------------------------------------------ approvals
@@ -266,7 +295,6 @@
     const goal = text.trim();
     if (!goal || state.busy) return;
     if (send({ type: "task.start", goal })) {
-      state.lastUserGoal = goal;
       addMessage("user", goal);
       $("goal").value = "";
       autosize();
@@ -280,15 +308,8 @@
   }
 
   // ------------------------------------------------------------------ side lists
-  function empty(list, text) {
-    list.replaceChildren(el("li", "empty", text));
-  }
-
-  function when(iso) {
-    if (!iso) return "";
-    const d = new Date(iso);
-    return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-  }
+  const empty = (list, text) => list.replaceChildren(el("li", "empty", text));
+  const when = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "");
 
   async function refreshLists() {
     try {
@@ -303,6 +324,13 @@
     }
   }
 
+  function smallButton(label, onClick) {
+    const b = el("button", "btn btn-small", label);
+    b.type = "button";
+    b.onclick = onClick;
+    return b;
+  }
+
   function renderTasks(tasks) {
     const list = $("historyList");
     if (!tasks.length) return empty(list, "Tasks you give JARVIS appear here.");
@@ -314,14 +342,11 @@
       meta.append(el("span", `status-${t.status}`, t.status), el("span", "", when(t.started_at)));
       li.append(meta);
       if (t.resumable) {
-        const b = el("button", "btn btn-small", "Resume");
-        b.type = "button";
-        b.onclick = () => {
+        const row = el("div", "row-actions");
+        row.append(smallButton("Resume", () => {
           if (state.busy) return toast("Wait for the current task to finish.");
           if (send({ type: "task.resume", task_id: t.id })) addMessage("user", `Resume: ${t.goal.split("\n")[0]}`);
-        };
-        const row = el("div", "row-actions");
-        row.append(b);
+        }));
         li.append(row);
       }
       list.append(li);
@@ -336,15 +361,11 @@
       const li = el("li");
       li.append(el("span", "", m.content));
       const meta = el("span", "meta");
-      meta.append(el("span", "", m.kind));
-      const del = el("button", "btn btn-small", "Forget");
-      del.type = "button";
-      del.onclick = async () => {
+      meta.append(el("span", "", m.kind), smallButton("Forget", async () => {
         if (!confirm(`Forget “${m.content}”?`)) return;
         try { await api(`/v1/memories/${m.id}`, { method: "DELETE" }); refreshLists(); }
         catch (err) { toast(err.message); }
-      };
-      meta.append(del);
+      }));
       li.append(meta);
       list.append(li);
     }
@@ -358,17 +379,14 @@
       const li = el("li");
       li.append(el("strong", "", w.name), el("span", "", w.description));
       const row = el("div", "row-actions");
-      const run = el("button", "btn btn-small", "Run");
-      run.type = "button";
-      run.onclick = () => runWorkflow(w);
-      const del = el("button", "btn btn-small", "Delete");
-      del.type = "button";
-      del.onclick = async () => {
-        if (!confirm(`Delete workflow “${w.name}”?`)) return;
-        try { await api(`/v1/workflows/${encodeURIComponent(w.name)}`, { method: "DELETE" }); refreshLists(); }
-        catch (err) { toast(err.message); }
-      };
-      row.append(run, del);
+      row.append(
+        smallButton("Run", () => runWorkflow(w)),
+        smallButton("Delete", async () => {
+          if (!confirm(`Delete workflow “${w.name}”?`)) return;
+          try { await api(`/v1/workflows/${encodeURIComponent(w.name)}`, { method: "DELETE" }); refreshLists(); }
+          catch (err) { toast(err.message); }
+        }),
+      );
       li.append(row, el("span", "meta", `run ${w.run_count}×`));
       list.append(li);
     }
@@ -383,10 +401,9 @@
     $("paramsTitle").textContent = `Run “${w.name}”`;
     const inputs = {};
     for (const p of w.parameters) {
-      const label = el("label", "", p);
+      const label = el("label", "field", p);
       const input = el("input");
       input.type = "text";
-      input.required = true;
       inputs[p] = input;
       label.append(input);
       fields.append(label);
@@ -407,12 +424,21 @@
       const setup = s.setup || {};
       $("model").textContent = setup.model ? `${setup.provider}: ${setup.model}` : s.llm_provider;
       renderVoice(setup.voice_state || "off");
-      if (setup && !setup.llm_ready) openSetup();
+      renderSpend(setup.spend_today_usd, setup.daily_cap_usd);
+      if (setup && (!setup.llm_ready || !setup.onboarded) && $("setup").hidden) openWizard(1);
       return s;
     } catch (err) {
       toast(`Status: ${err.message}`);
       return null;
     }
+  }
+
+  function renderSpend(today, cap) {
+    const p = $("spend");
+    if (today === undefined) { p.hidden = true; return; }
+    p.hidden = false;
+    p.textContent = cap ? `$${today.toFixed(2)} / $${cap.toFixed(2)} today` : `$${today.toFixed(2)} today`;
+    p.className = `pill ${cap && today >= cap * 0.8 ? "pill-warn" : "pill-muted"}`;
   }
 
   function renderVoice(voiceState) {
@@ -427,12 +453,12 @@
     const s = state.status && state.status.setup;
     const turnOn = $("voiceToggle").dataset.state === "off";
     if (turnOn && s && !s.voice_models_ready) {
-      openSetup();
-      return toast("Download the voice models first (step 2).");
+      openWizard(4);
+      return toast("Tick hands-free voice and finish setup to download the voice models.");
     }
     try {
       renderVoice(turnOn ? "starting" : "off");
-      await api("/v1/voice", { method: "POST", body: JSON.stringify({ enabled: turnOn }) });
+      await post("/v1/voice", { enabled: turnOn });
     } catch (err) {
       toast(err.message);
       refreshStatus();
@@ -440,30 +466,225 @@
   }
 
   // ------------------------------------------------------------------ setup wizard
-  function openSetup() {
+  const STEPS = 7;
+  const VOICE_LABELS = {
+    british_male: "British male",
+    british_female: "British female",
+    american_male: "American male",
+    american_female: "American female",
+  };
+  const wiz = { step: 1, llmReady: false, voiceReady: false };
+
+  async function openWizard(step = 1) {
+    try {
+      state.settings = await api("/v1/settings");
+    } catch (err) {
+      return toast(`Settings: ${err.message}`);
+    }
     const s = (state.status && state.status.setup) || {};
+    wiz.llmReady = Boolean(s.llm_ready);
+    wiz.voiceReady = Boolean(s.voice_models_ready);
+    fillWizard(state.settings, s);
     $("setup").hidden = false;
-    $("roots").textContent = (s.allowed_roots || []).join(", ") || "your Documents and Desktop";
-    const provider = s.provider || "anthropic";
-    for (const r of document.querySelectorAll('input[name="provider"]')) r.checked = r.value === provider;
+    $("wizClose").hidden = !(s.onboarded && s.llm_ready);
+    showStep(step);
+  }
+
+  function fillWizard(cfg, s) {
+    const p = cfg.profile;
+    $("pName").value = p.name;
+    $("pNick").value = p.nickname;
+    setRadio("address", p.address);
+
+    setRadio("style", cfg.persona.style);
+    $("pushback").checked = cfg.persona.pushback;
+    $("progressUpdates").checked = cfg.persona.progress_updates;
+    $("quickReplies").checked = cfg.persona.quick_replies;
+
+    setRadio("provider", s.provider || "anthropic");
     showProviderFields();
     if (s.llm_ready) {
       $("modelResult").textContent = s.provider === "anthropic" ? "✔ Claude is set up." : "✔ Ollama is selected.";
       $("modelResult").className = "result ok";
     }
-    if (s.voice_models_ready) onVoiceReady();
-    $("voiceOnSetup").checked = Boolean(s.voice_enabled);
-    $("finishSetup").disabled = !s.llm_ready;
+
+    const grid = $("voiceGrid");
+    grid.replaceChildren();
+    for (const id of cfg.voices) {
+      const card = el("div", "voice-card");
+      const label = el("label");
+      const input = el("input");
+      input.type = "radio";
+      input.name = "voice";
+      input.value = id;
+      input.checked = id === cfg.voice.tts_voice;
+      label.append(input, el("span", "", VOICE_LABELS[id] || id));
+      card.append(label, smallButton("▶ Preview", () => previewVoice(id)));
+      grid.append(card);
+    }
+    $("speed").value = cfg.voice.tts_speed;
+    $("speedLabel").textContent = `${Number(cfg.voice.tts_speed).toFixed(2)}×`;
+    $("voiceOn").checked = Boolean(s.voice_enabled);
+
+    const f = cfg.features;
+    $("fWeb").checked = f.web_research;
+    $("fDocs").checked = f.documents.enabled;
+    $("fDocsFolders").value = (f.documents.folders.length ? f.documents.folders : s.allowed_roots || []).join("\n");
+    $("fEmail").checked = f.email.enabled;
+    setRadio("emailProvider", f.email.provider);
+    setRadio("emailAccount", f.email.account);
+    $("fProtocols").checked = f.protocols.enabled;
+    $("fBriefing").value = f.protocols.briefing_time || "";
+    $("fHud").checked = f.hud.enabled;
+    $("fDashboard").checked = f.hud.dashboard;
+    $("fPhone").checked = f.phone.enabled;
+    setRadio("phone", f.phone.platform);
+    $("fHelpers").checked = f.helpers;
+    $("fHome").checked = f.smart_home.enabled;
+    $("fHomeUrl").value = f.smart_home.url;
+    $("fWebcam").checked = f.webcam;
+    for (const box of document.querySelectorAll("[data-toggles]")) $(box.dataset.toggles).hidden = !box.checked;
+    $("workWarning").hidden = radio("emailAccount") !== "work";
+
+    $("bCap").value = cfg.budget.daily_usd;
+    setRadio("background", cfg.budget.background);
+    $("roots").textContent = (s.allowed_roots || []).join(", ");
+  }
+
+  function collect() {
+    const folders = $("fDocsFolders").value.split("\n").map((x) => x.trim()).filter(Boolean);
+    return {
+      profile: {
+        name: $("pName").value.trim(),
+        address: radio("address") || "none",
+        nickname: $("pNick").value.trim(),
+      },
+      persona: {
+        style: radio("style") || "jarvis",
+        pushback: $("pushback").checked,
+        progress_updates: $("progressUpdates").checked,
+        quick_replies: $("quickReplies").checked,
+      },
+      voice: { tts_voice: radio("voice"), tts_speed: Number($("speed").value) },
+      features: {
+        web_research: $("fWeb").checked,
+        documents: { enabled: $("fDocs").checked, folders },
+        email: { enabled: $("fEmail").checked, provider: radio("emailProvider"), account: radio("emailAccount") },
+        protocols: { enabled: $("fProtocols").checked, briefing_time: $("fBriefing").value || null },
+        hud: { enabled: $("fHud").checked, dashboard: $("fDashboard").checked },
+        phone: { enabled: $("fPhone").checked, platform: radio("phone") },
+        smart_home: { enabled: $("fHome").checked, url: $("fHomeUrl").value.trim() },
+        webcam: $("fWebcam").checked,
+        helpers: $("fHelpers").checked,
+      },
+      budget: { daily_usd: Number($("bCap").value || 0), background: radio("background") || "fast" },
+    };
+  }
+
+  function showStep(n) {
+    wiz.step = Math.max(1, Math.min(STEPS, n));
+    for (const s of document.querySelectorAll(".step")) s.hidden = Number(s.dataset.step) !== wiz.step;
+    const dots = $("dots");
+    dots.replaceChildren();
+    for (let i = 1; i <= STEPS; i++) dots.append(el("li", i < wiz.step ? "done" : i === wiz.step ? "current" : ""));
+    $("wizBack").disabled = wiz.step === 1;
+    $("wizNext").textContent = wiz.step === STEPS ? "Finish" : "Next";
+    if (wiz.step === STEPS) renderReview();
+  }
+
+  function validateStep() {
+    if (wiz.step === 1 && radio("address") === "nickname" && !$("pNick").value.trim()) return "Enter a nickname, or pick another option.";
+    if (wiz.step === 1 && radio("address") === "name" && !$("pName").value.trim()) return "Enter your name, or pick another option.";
+    if (wiz.step === 3 && !wiz.llmReady) return "Save and check an AI model first.";
+    if (wiz.step === 5 && $("fHome").checked && !$("fHomeUrl").value.trim()) return "Enter your Home Assistant address, or untick smart home.";
+    return null;
+  }
+
+  function renderReview() {
+    const c = collect();
+    const addressText = { sir: "Sir", maam: "Ma'am", name: "First name", nickname: `“${c.profile.nickname}”`, none: "No title" };
+    const on = Object.entries({
+      "Web research": c.features.web_research,
+      "Documents": c.features.documents.enabled,
+      "Email & calendar": c.features.email.enabled,
+      "Protocols": c.features.protocols.enabled,
+      "HUD": c.features.hud.enabled,
+      "Phone": c.features.phone.enabled,
+      "Helpers": c.features.helpers,
+      "Smart home": c.features.smart_home.enabled,
+      "Webcam": c.features.webcam,
+    }).filter(([, v]) => v).map(([k]) => k);
+    const rows = [
+      ["Name", c.profile.name || "—"],
+      ["Address me as", addressText[c.profile.address]],
+      ["Personality", c.persona.style],
+      ["Model", state.status?.setup?.model || "—"],
+      ["Voice", `${VOICE_LABELS[c.voice.tts_voice] || c.voice.tts_voice}, ${c.voice.tts_speed.toFixed(2)}×${$("voiceOn").checked ? ", hands-free on" : ""}`],
+      ["Features", on.length ? on.join(", ") : "Core only"],
+      ["Daily limit", c.budget.daily_usd ? `$${c.budget.daily_usd.toFixed(2)}` : "No limit"],
+    ];
+    const dl = $("review");
+    dl.replaceChildren();
+    for (const [k, v] of rows) dl.append(el("dt", "", k), el("dd", "", v));
+  }
+
+  async function next() {
+    const problem = validateStep();
+    if (problem) return toast(problem);
+    if (wiz.step < STEPS) return showStep(wiz.step + 1);
+    await finishWizard();
+  }
+
+  async function finishWizard() {
+    const out = $("finishResult");
+    out.className = "result";
+    out.textContent = "Saving…";
+    $("wizNext").disabled = true;
+    try {
+      const changes = collect();
+      changes.profile.onboarded = true;
+      await api("/v1/settings", { method: "PUT", body: JSON.stringify(changes) });
+      const wantVoice = $("voiceOn").checked;
+      const status = await refreshStatus();
+      const s = (status && status.setup) || {};
+      if (wantVoice && !s.voice_models_ready) {
+        out.textContent = "Downloading voice models…";
+        $("voiceProgress").hidden = false;
+        wiz.pendingVoice = true;
+        await post("/v1/setup/voice-models");
+        return; // finished in onVoiceReady
+      }
+      if (wantVoice !== Boolean(s.voice_enabled)) await post("/v1/voice", { enabled: wantVoice });
+      closeWizard();
+    } catch (err) {
+      out.textContent = err.message;
+      out.className = "result bad";
+    } finally {
+      $("wizNext").disabled = false;
+    }
+  }
+
+  function closeWizard() {
+    $("setup").hidden = true;
+    if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
+    refreshStatus();
+    refreshLists();
+    api("/v1/settings").then((cfg) => {
+      state.settings = cfg;
+      const who = cfg.profile.name ? `, ${cfg.profile.name.split(" ")[0]}` : "";
+      $("welcomeTitle").textContent = `What can I do for you${who}?`;
+    }).catch(() => {});
+    $("goal").focus();
   }
 
   function showProviderFields() {
-    const p = document.querySelector('input[name="provider"]:checked').value;
+    const p = radio("provider") || "anthropic";
     $("claudeFields").hidden = p !== "anthropic";
     $("ollamaFields").hidden = p !== "ollama";
   }
 
   async function saveModel() {
-    const p = document.querySelector('input[name="provider"]:checked').value;
+    const p = radio("provider");
     const out = $("modelResult");
     out.className = "result";
     out.textContent = "Checking…";
@@ -471,22 +692,16 @@
     try {
       if (p === "anthropic") {
         const key = $("apiKey").value.trim();
-        if (!key && state.status?.setup?.api_key_set) {
-          await api("/v1/setup/provider", { method: "POST", body: JSON.stringify({ provider: "anthropic" }) });
-        } else {
-          await api("/v1/setup/api-key", { method: "POST", body: JSON.stringify({ key }) });
-        }
+        if (!key && state.status?.setup?.api_key_set) await post("/v1/setup/provider", { provider: "anthropic" });
+        else await post("/v1/setup/api-key", { key });
         $("apiKey").value = "";
         out.textContent = "✔ Claude is set up.";
       } else {
-        await api("/v1/setup/provider", {
-          method: "POST",
-          body: JSON.stringify({ provider: "ollama", ollama_model: $("ollamaModel").value.trim() }),
-        });
+        await post("/v1/setup/provider", { provider: "ollama", ollama_model: $("ollamaModel").value.trim() });
         out.textContent = "✔ Ollama is reachable.";
       }
       out.className = "result ok";
-      $("finishSetup").disabled = false;
+      wiz.llmReady = true;
       await refreshStatus();
     } catch (err) {
       out.textContent = err.message;
@@ -496,44 +711,38 @@
     }
   }
 
-  async function getVoice() {
-    $("getVoice").disabled = true;
-    $("voiceProgress").hidden = false;
-    $("voiceResult").className = "result";
-    $("voiceResult").textContent = "Starting download…";
-    try { await api("/v1/setup/voice-models", { method: "POST" }); }
-    catch (err) { $("voiceResult").textContent = err.message; $("getVoice").disabled = false; }
+  async function previewVoice(id) {
+    const out = $("voiceResult");
+    out.className = "result";
+    out.textContent = `Preparing ${VOICE_LABELS[id] || id}… (first time downloads ~63 MB)`;
+    try {
+      await post("/v1/voice/preview", { voice: id, speed: Number($("speed").value) });
+      out.textContent = `Played ${VOICE_LABELS[id] || id}.`;
+      $("voiceProgress").hidden = true;
+    } catch (err) {
+      out.textContent = err.message;
+      out.className = "result bad";
+    }
   }
 
   function onVoiceProgress(p) {
     const pct = p.total ? Math.floor((100 * p.done) / p.total) : 0;
     $("voiceProgress").hidden = false;
     $("voiceProgress").value = pct;
-    $("voiceResult").textContent = p.file ? `${p.file}: ${pct}%` : "Preparing speech recognition…";
+    const text = p.file ? `Downloading ${p.file}: ${pct}%` : "Preparing speech recognition…";
+    $("voiceResult").textContent = text;
+    if (wiz.pendingVoice) $("finishResult").textContent = text;
   }
 
-  function onVoiceReady() {
+  async function onVoiceReady() {
     $("voiceProgress").hidden = true;
-    $("getVoice").disabled = true;
-    $("getVoice").textContent = "Voice models installed";
-    $("voiceResult").textContent = "✔ Voice is ready.";
+    $("voiceResult").textContent = "✔ Voice models installed.";
     $("voiceResult").className = "result ok";
-    if (state.status && state.status.setup) state.status.setup.voice_models_ready = true;
-  }
-
-  async function finishSetup() {
-    const s = state.status && state.status.setup;
-    const wantVoice = $("voiceOnSetup").checked;
-    if (wantVoice && s && !s.voice_models_ready) return toast("Download the voice models first, or untick voice.");
-    try {
-      if (s && wantVoice !== Boolean(s.voice_enabled)) {
-        await api("/v1/voice", { method: "POST", body: JSON.stringify({ enabled: wantVoice }) });
-      }
-    } catch (err) { toast(err.message); }
-    $("setup").hidden = true;
-    if ("Notification" in window && Notification.permission === "default") Notification.requestPermission();
-    refreshStatus();
-    $("goal").focus();
+    if (wiz.pendingVoice) {
+      wiz.pendingVoice = false;
+      try { await post("/v1/voice", { enabled: true }); } catch (err) { toast(err.message); }
+      closeWizard();
+    }
   }
 
   // ------------------------------------------------------------------ wiring
@@ -546,14 +755,23 @@
     for (const b of document.querySelectorAll(".example")) b.onclick = () => submitGoal(b.textContent);
     $("stopBtn").onclick = async () => {
       send({ type: "task.cancel" });
-      try { await api("/v1/stop", { method: "POST" }); } catch (err) { toast(err.message); }
+      try { await post("/v1/stop"); } catch (err) { toast(err.message); }
     };
     $("voiceToggle").onclick = toggleVoice;
-    $("setupBtn").onclick = openSetup;
+    $("setupBtn").onclick = () => openWizard(1);
     for (const r of document.querySelectorAll('input[name="provider"]')) r.onchange = showProviderFields;
+    for (const r of document.querySelectorAll('input[name="emailAccount"]')) {
+      r.onchange = () => { $("workWarning").hidden = radio("emailAccount") !== "work"; };
+    }
+    for (const box of document.querySelectorAll("[data-toggles]")) {
+      box.onchange = () => { $(box.dataset.toggles).hidden = !box.checked; };
+    }
+    $("pNick").onfocus = () => setRadio("address", "nickname");
+    $("speed").oninput = () => { $("speedLabel").textContent = `${Number($("speed").value).toFixed(2)}×`; };
     $("saveModel").onclick = saveModel;
-    $("getVoice").onclick = getVoice;
-    $("finishSetup").onclick = finishSetup;
+    $("wizBack").onclick = () => showStep(wiz.step - 1);
+    $("wizNext").onclick = next;
+    $("wizClose").onclick = () => { $("setup").hidden = true; };
     for (const tab of document.querySelectorAll(".tab")) {
       tab.onclick = () => {
         for (const t of document.querySelectorAll(".tab")) {

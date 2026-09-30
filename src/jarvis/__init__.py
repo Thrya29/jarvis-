@@ -5,6 +5,6 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("jarvis")
 except PackageNotFoundError:  # running from a frozen build or source tree
-    __version__ = "1.0.0"
+    __version__ = "2.0.0"
 
 __all__ = ["__version__"]

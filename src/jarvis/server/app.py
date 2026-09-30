@@ -238,6 +238,30 @@ def create_app(
         board.track(task)
         return {"status": "started"}
 
+    @app.get("/v1/settings", dependencies=auth)
+    async def get_settings() -> dict[str, Any]:
+        return need_hub().settings_view()
+
+    @app.put("/v1/settings", dependencies=auth)
+    async def put_settings(changes: Annotated[dict[str, dict[str, Any]], Body()]) -> dict[str, Any]:
+        try:
+            return await need_hub().update_settings(changes)
+        except ValueError as exc:  # includes pydantic ValidationError
+            raise HTTPException(422, str(exc).splitlines()[0] if str(exc) else "invalid") from exc
+
+    @app.post("/v1/voice/preview", dependencies=auth)
+    async def preview_voice(
+        voice: Annotated[str, Body()], speed: Annotated[float, Body()] = 1.0
+    ) -> dict[str, bool]:
+        try:
+            await need_hub().preview_voice(voice, speed)
+        except ValueError as exc:
+            raise HTTPException(422, "unknown voice") from exc
+        except Exception as exc:
+            log.exception("voice preview failed")
+            raise HTTPException(500, f"preview failed: {exc}") from exc
+        return {"played": True}
+
     @app.post("/v1/voice", dependencies=auth)
     async def set_voice(enabled: Annotated[bool, Body(embed=True)]) -> dict[str, Any]:
         h = need_hub()

@@ -11,12 +11,13 @@ import asyncio
 import logging
 import sqlite3
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
 from jarvis.agent.events import Event, EventSink, null_sink
-from jarvis.agent.prompts import build_system_prompt, goal_message
+from jarvis.agent.prompts import build_system_prompt, goal_message, quick_prompt
 from jarvis.core.config import AgentConfig
 from jarvis.llm.base import (
     Conversation,
@@ -28,7 +29,7 @@ from jarvis.llm.base import (
     TurnResult,
     Usage,
 )
-from jarvis.memory.store import Store
+from jarvis.memory.store import Memory, Store
 from jarvis.tools.base import ToolContext, ToolRegistry
 
 log = logging.getLogger(__name__)
@@ -79,6 +80,11 @@ class Agent:
         self._emit = self._journaling(emit)
         ctx.emit = self._emit
         screen = ctx.desktop is not None
+        self._quick = provider.quick
+        # Recent (goal, reply) pairs for the quick responder, and quick exchanges not yet
+        # seen by the main conversation.
+        self._history: deque[tuple[str, str]] = deque(maxlen=8)
+        self._chat: list[tuple[str, str]] = []
         self._conv: Conversation = provider.new_conversation(
             build_system_prompt(
                 ctx.guard.allowed,
@@ -86,6 +92,8 @@ class Agent:
                 pixel_control=screen and provider.supports_computer_use,
                 kill_hotkey=ctx.settings.safety.kill_hotkey,
                 memory=ctx.store is not None,
+                profile=ctx.settings.profile,
+                persona=ctx.settings.persona,
             ),
             registry.specs(),
             computer_use=screen and provider.supports_computer_use,
@@ -132,9 +140,25 @@ class Agent:
             task_id = uuid.uuid4().hex[:12]
             self._ctx.task_id = task_id
             result = TaskResult(task_id, TaskStatus.FAILED, "")
+            await self._emit({"type": "task.started", "task_id": task_id, "goal": goal})
+            if resumed_from is None and self._quick_allowed(goal):
+                try:
+                    answer = await self._quick_answer(goal, task_id, voice)
+                except LLMError as exc:
+                    log.info("quick reply unavailable (%s); using the full agent", exc)
+                    answer = None
+                except asyncio.CancelledError:
+                    result.status, result.summary = TaskStatus.CANCELLED, "Cancelled by the user."
+                    await self._emit_finished(result)
+                    raise
+                if answer is not None:
+                    result.status, result.summary = TaskStatus.COMPLETED, answer
+                    self._history.append((goal, answer))
+                    self._chat.append((goal, answer))
+                    await self._emit_finished(result)
+                    return result
             self._ctx.audit.record("task.start", task_id=task_id, goal=goal)
             self._journal("task_started", task_id, goal, resumed_from)
-            await self._emit({"type": "task.started", "task_id": task_id, "goal": goal})
             pending = _Inflight()
             try:
                 async with asyncio.timeout(self._cfg.task_timeout_s):
@@ -154,7 +178,55 @@ class Agent:
                 result.summary = f"Stopped: {exc}"
                 self._close_pending(pending, "Not run: the task failed.")
             await self._finish(result)
+            if result.summary:
+                self._history.append((goal, result.summary))
             return result
+
+    def _quick_allowed(self, goal: str) -> bool:
+        return (
+            self._quick is not None
+            and self._ctx.settings.persona.quick_replies
+            and len(goal) <= 400
+        )
+
+    async def _quick_answer(self, goal: str, task_id: str, voice: bool) -> str | None:
+        """Answer conversational turns with the fast model; None routes to the agent."""
+        assert self._quick is not None
+        streamed = False
+
+        async def on_delta(kind: str, text: str) -> None:
+            nonlocal streamed
+            if kind == "text":
+                streamed = True
+                await self._emit({"type": "assistant.delta", "task_id": task_id, "text": text})
+
+        system = quick_prompt(
+            self._ctx.settings.profile,
+            self._ctx.settings.persona,
+            self._memories(goal),
+            voice=voice,
+        )
+        answer = await self._quick.respond(system, list(self._history), goal, on_delta)
+        if answer is not None:
+            await self._emit(
+                {
+                    "type": "assistant.text",
+                    "task_id": task_id,
+                    "text": answer,
+                    "streamed": streamed,
+                    "quick": True,
+                }
+            )
+        return answer
+
+    def _memories(self, goal: str) -> list[Memory]:
+        if self._ctx.store is None or not self._ctx.settings.memory.context_items:
+            return []
+        try:
+            return self._ctx.store.context_for(goal, self._ctx.settings.memory.context_items)
+        except sqlite3.Error:
+            log.warning("could not load memories", exc_info=True)
+            return []
 
     async def _finish(self, result: TaskResult) -> None:
         self._journal(
@@ -171,6 +243,9 @@ class Agent:
             input_tokens=result.usage.input_tokens,
             output_tokens=result.usage.output_tokens,
         )
+        await self._emit_finished(result)
+
+    async def _emit_finished(self, result: TaskResult) -> None:
         await asyncio.shield(
             self._emit(
                 {
@@ -203,11 +278,27 @@ class Agent:
         pending.calls.clear()
         pending.outcomes.clear()
 
-    async def _step(self) -> TurnResult:
+    async def _step(self, task_id: str) -> tuple[TurnResult, bool]:
+        """One model turn. Returns the turn and whether its text was streamed."""
         for attempt in range(LLM_RETRIES + 1):
+            streamed = False
+
+            async def on_delta(kind: str, text: str) -> None:
+                nonlocal streamed
+                if kind == "text":
+                    streamed = True
+                    await self._emit({"type": "assistant.delta", "task_id": task_id, "text": text})
+                elif kind == "progress":
+                    await self._emit(
+                        {"type": "assistant.progress", "task_id": task_id, "text": text}
+                    )
+
             try:
-                return await self._conv.step()
+                return await self._conv.step(on_delta), streamed
             except LLMError as exc:
+                if streamed:
+                    # Drop the partial reply shown/spoken so far; the retry starts over.
+                    await self._emit({"type": "assistant.discard", "task_id": task_id})
                 if not exc.retryable or attempt == LLM_RETRIES:
                     raise
                 log.warning("LLM call failed (%s); retrying", exc)
@@ -217,21 +308,21 @@ class Agent:
     async def _loop(
         self, goal: str, result: TaskResult, pending: _Inflight, voice: bool = False
     ) -> None:
-        memories = []
-        if self._ctx.store is not None and self._ctx.settings.memory.context_items:
-            try:
-                memories = self._ctx.store.context_for(
-                    goal, self._ctx.settings.memory.context_items
-                )
-            except sqlite3.Error:
-                log.warning("could not load memories", exc_info=True)
-        self._conv.add_user(goal_message(goal, voice=voice, memories=memories))
+        chat, self._chat = self._chat, []
+        self._conv.add_user(
+            goal_message(goal, voice=voice, memories=self._memories(goal), recent_chat=chat)
+        )
         for _ in range(self._cfg.max_turns):
-            turn = await self._step()
+            turn, streamed = await self._step(result.task_id)
             result.usage.add(turn.usage)
             if turn.text.strip():
                 await self._emit(
-                    {"type": "assistant.text", "task_id": result.task_id, "text": turn.text}
+                    {
+                        "type": "assistant.text",
+                        "task_id": result.task_id,
+                        "text": turn.text,
+                        "streamed": streamed,
+                    }
                 )
 
             if turn.stop is StopKind.REFUSAL:

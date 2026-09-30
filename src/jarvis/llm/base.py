@@ -7,9 +7,14 @@ surface the agent loop drives.
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol
+
+# on_delta(kind, text): kind "text" = a piece of the reply as it's generated,
+# "progress" = one short progress note written between tool calls.
+DeltaSink = Callable[[str, str], Awaitable[None]]
 
 
 class StopKind(StrEnum):
@@ -79,8 +84,20 @@ class Conversation(Protocol):
 
     def add_tool_results(self, results: list[ToolOutcome]) -> None: ...
 
-    async def step(self) -> TurnResult:
+    async def step(self, on_delta: DeltaSink | None = None) -> TurnResult:
         """Send the history to the model and append its reply to the history."""
+        ...
+
+
+class QuickChat(Protocol):
+    async def respond(
+        self,
+        system: str,
+        history: list[tuple[str, str]],
+        text: str,
+        on_delta: DeltaSink | None = None,
+    ) -> str | None:
+        """A direct answer, or None when the request needs the full agent."""
         ...
 
 
@@ -88,6 +105,11 @@ class LLMProvider(Protocol):
     name: str
     # Whether the model can drive the desktop from screenshots (Claude's computer toolset).
     supports_computer_use: bool
+
+    @property
+    def quick(self) -> QuickChat | None:
+        """Fast conversational replies (None if the provider has no fast path)."""
+        ...
 
     def new_conversation(
         self, system: str, tools: list[ToolSpec], computer_use: bool = False

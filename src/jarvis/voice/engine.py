@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 import logging
 import math
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
@@ -75,7 +76,8 @@ class VoiceApprover:
         self._va = assistant
 
     async def request(self, req: ApprovalRequest) -> ApprovalDecision:
-        answer = await self._va.ask(f"{for_speech(req.summary)} Should I go ahead?")
+        who = f", {self._va.addressee}" if self._va.addressee else ""
+        answer = await self._va.ask(f"{for_speech(req.summary)} Should I go ahead{who}?")
         decision = parse_yes_no(answer)
         if decision is None and answer:
             answer = await self._va.ask("Sorry, was that a yes or a no?")
@@ -101,8 +103,12 @@ class VoiceAssistant:
         log_line: Callable[[str], None] = print,
         task_lock: asyncio.Lock | None = None,
         track: Callable[[asyncio.Task[Any]], None] | None = None,
+        speak_progress: bool = True,
+        addressee: str | None = None,
     ) -> None:
         self.cfg = cfg
+        self.speak_progress = speak_progress
+        self.addressee = addressee
         self._stt = stt
         self._tts = tts
         self._player = player
@@ -127,6 +133,7 @@ class VoiceAssistant:
         self._follow_until = -math.inf
         self._paused_for_barge = False
         self._spoke_this_task = False
+        self._stream_buf = ""  # streamed reply text not yet spoken (no sentence end yet)
         self._early: asyncio.Task[str] | None = None  # speculative transcription
         self._closed = asyncio.Event()
 
@@ -316,10 +323,28 @@ class VoiceAssistant:
 
     async def on_agent_event(self, event: AgentEvent) -> None:
         kind = event.get("type")
-        if kind == "assistant.text":
+        if kind == "assistant.delta":
+            # Speak each sentence as soon as it's complete, while the rest is generated.
             self._spoke_this_task = True
-            await self.say(for_speech(str(event["text"])))
+            self._stream_buf += str(event["text"])
+            done, self._stream_buf = split_complete(self._stream_buf)
+            if done:
+                await self.say(for_speech(done))
+        elif kind == "assistant.discard":
+            self._stream_buf = ""
+        elif kind == "assistant.text":
+            self._spoke_this_task = True
+            if event.get("streamed"):
+                rest, self._stream_buf = self._stream_buf, ""
+                if rest.strip():
+                    await self.say(for_speech(rest))
+            else:
+                await self.say(for_speech(str(event["text"])))
+        elif kind == "assistant.progress":
+            if self.speak_progress:
+                await self.say(for_speech(str(event["text"])))
         elif kind == "task.finished":
+            self._stream_buf = ""
             status = event.get("status")
             if status in {"failed", "refused", "limit_reached"} or (
                 status == "completed" and not self._spoke_this_task
@@ -359,6 +384,19 @@ class VoiceAssistant:
             return ""
         finally:
             self._answer = None
+
+
+_SENTENCE_END = re.compile(r"[.!?][\"')\]]?(?=\s)")
+
+
+def split_complete(text: str) -> tuple[str, str]:
+    """Split streamed text into (complete sentences, unfinished remainder)."""
+    last = None
+    for m in _SENTENCE_END.finditer(text):
+        last = m
+    if last is None:
+        return "", text
+    return text[: last.end()], text[last.end() :].lstrip()
 
 
 def combine_sinks(

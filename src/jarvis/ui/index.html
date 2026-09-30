@@ -15,10 +15,11 @@
       <span id="conn" class="pill pill-muted" title="Connection to the JARVIS service">connecting…</span>
       <span id="model" class="pill pill-muted" title="Language model"></span>
       <button id="voiceToggle" class="pill pill-button" type="button" title="Hands-free voice (say “Hey Jarvis”)">Voice: off</button>
+      <span id="spend" class="pill pill-muted" title="Estimated API spend today"></span>
     </div>
     <div class="actions">
       <button id="stopBtn" class="btn btn-danger" type="button" hidden title="Stop everything (also Ctrl+Alt+J)">Stop</button>
-      <button id="setupBtn" class="btn btn-ghost" type="button">Setup</button>
+      <button id="setupBtn" class="btn btn-ghost" type="button">Settings</button>
     </div>
   </header>
 
@@ -37,7 +38,7 @@
     <section class="chat" aria-label="Conversation">
       <div id="log" class="log" aria-live="polite">
         <div id="welcome" class="welcome">
-          <h1>What can I do for you?</h1>
+          <h1 id="welcomeTitle">What can I do for you?</h1>
           <p>Give me a goal in plain language. I plan it, work through your files, apps and the web, and ask before anything risky.</p>
           <div class="examples">
             <button class="example" type="button">Organise the PDFs on my Desktop into folders by topic</button>
@@ -60,42 +61,153 @@
     </aside>
   </main>
 
+  <!-- ================================================================ setup wizard -->
   <section id="setup" class="setup" hidden aria-label="Setup">
     <div class="card">
-      <h1>Set up JARVIS</h1>
-      <ol class="steps">
-        <li>
-          <h2>1. Choose the AI model</h2>
-          <label class="choice"><input type="radio" name="provider" value="anthropic" checked>
-            <span><strong>Claude</strong> (recommended) — best at planning and operating your screen. Needs an Anthropic API key.</span></label>
-          <label class="choice"><input type="radio" name="provider" value="ollama">
-            <span><strong>Ollama</strong> — fully offline, runs on this PC. Much weaker at long tasks; no screen vision.</span></label>
-          <div id="claudeFields" class="fields">
-            <input id="apiKey" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" aria-label="Anthropic API key">
-            <p class="hint">Stored in Windows Credential Manager, never in a file. Get one at console.anthropic.com.</p>
+      <div class="wizard-head">
+        <h1>Set up JARVIS</h1>
+        <ol class="progress-dots" id="dots" aria-hidden="true"></ol>
+      </div>
+
+      <!-- 1. About you -->
+      <div class="step" data-step="1" data-title="About you">
+        <h2>About you</h2>
+        <label class="field">Your name <input id="pName" type="text" maxlength="60" autocomplete="name" placeholder="e.g. Priya Sharma"></label>
+        <fieldset>
+          <legend>How should JARVIS address you?</legend>
+          <label class="choice"><input type="radio" name="address" value="sir"> <span>Sir</span></label>
+          <label class="choice"><input type="radio" name="address" value="maam"> <span>Ma'am</span></label>
+          <label class="choice"><input type="radio" name="address" value="name"> <span>By my first name</span></label>
+          <label class="choice"><input type="radio" name="address" value="nickname"> <span>A nickname:</span>
+            <input id="pNick" type="text" maxlength="40" class="inline-input" aria-label="Nickname"></label>
+          <label class="choice"><input type="radio" name="address" value="none"> <span>No title or name</span></label>
+        </fieldset>
+      </div>
+
+      <!-- 2. Personality -->
+      <div class="step" data-step="2" data-title="Personality">
+        <h2>Personality</h2>
+        <fieldset>
+          <legend>Style</legend>
+          <label class="choice"><input type="radio" name="style" value="jarvis"> <span><strong>JARVIS</strong> — calm, precise, quietly witty</span></label>
+          <label class="choice"><input type="radio" name="style" value="professional"> <span><strong>Professional</strong> — courteous and to the point</span></label>
+          <label class="choice"><input type="radio" name="style" value="friendly"> <span><strong>Friendly</strong> — warm and encouraging</span></label>
+          <label class="choice"><input type="radio" name="style" value="minimal"> <span><strong>Minimal</strong> — results only, no small talk</span></label>
+        </fieldset>
+        <fieldset>
+          <legend>Behaviour</legend>
+          <label class="choice"><input id="pushback" type="checkbox"> <span>Warn me before I do something unwise</span></label>
+          <label class="choice"><input id="progressUpdates" type="checkbox"> <span>Give short spoken progress updates during long tasks</span></label>
+          <label class="choice"><input id="quickReplies" type="checkbox"> <span>Answer quick questions instantly with a faster model</span></label>
+        </fieldset>
+      </div>
+
+      <!-- 3. AI model -->
+      <div class="step" data-step="3" data-title="AI model">
+        <h2>AI model</h2>
+        <label class="choice"><input type="radio" name="provider" value="anthropic">
+          <span><strong>Claude</strong> (recommended) — best at planning and operating your screen. Needs an Anthropic API key.</span></label>
+        <label class="choice"><input type="radio" name="provider" value="ollama">
+          <span><strong>Ollama</strong> — fully offline, runs on this PC. Much weaker at long tasks; no screen vision.</span></label>
+        <div id="claudeFields" class="fields">
+          <input id="apiKey" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" aria-label="Anthropic API key">
+          <p class="hint">Stored in Windows Credential Manager, never in a file. Get one at console.anthropic.com → API Keys.</p>
+        </div>
+        <div id="ollamaFields" class="fields" hidden>
+          <input id="ollamaModel" type="text" value="qwen2.5:3b" aria-label="Ollama model">
+          <p class="hint">Install Ollama and run <code>ollama pull qwen2.5:3b</code> first.</p>
+        </div>
+        <button id="saveModel" class="btn btn-primary" type="button">Save and check</button>
+        <p id="modelResult" class="result" role="status"></p>
+      </div>
+
+      <!-- 4. Voice -->
+      <div class="step" data-step="4" data-title="Voice">
+        <h2>Voice</h2>
+        <fieldset>
+          <legend>JARVIS's voice</legend>
+          <div class="voice-grid" id="voiceGrid"></div>
+        </fieldset>
+        <label class="field">Speaking speed <input id="speed" type="range" min="0.8" max="1.3" step="0.05"> <span id="speedLabel"></span></label>
+        <label class="choice"><input id="voiceOn" type="checkbox"> <span>Hands-free: listen for “Hey Jarvis” (voice models are downloaded when you finish, ~130 MB)</span></label>
+        <p id="voiceResult" class="result" role="status"></p>
+        <progress id="voiceProgress" max="100" value="0" hidden></progress>
+      </div>
+
+      <!-- 5. Features -->
+      <div class="step" data-step="5" data-title="Features">
+        <h2>Features</h2>
+        <p class="hint">Tick what you want. Features marked with a version arrive in that update — your choices are saved now and switch on automatically when it's installed.</p>
+        <div class="features">
+          <label class="choice"><input id="fWeb" type="checkbox"> <span><strong>Web search &amp; research</strong> with sources <em class="soon">v2.1</em></span></label>
+
+          <label class="choice"><input id="fDocs" type="checkbox" data-toggles="docsOpts"> <span><strong>Ask my documents</strong> — search and answer from your files <em class="soon">v2.1</em></span></label>
+          <div id="docsOpts" class="sub" hidden>
+            <label class="field">Folders to index (one per line)<textarea id="fDocsFolders" rows="3" spellcheck="false"></textarea></label>
           </div>
-          <div id="ollamaFields" class="fields" hidden>
-            <input id="ollamaModel" type="text" value="qwen2.5:3b" aria-label="Ollama model">
-            <p class="hint">Install Ollama and run <code>ollama pull qwen2.5:3b</code> first.</p>
+
+          <label class="choice"><input id="fEmail" type="checkbox" data-toggles="emailOpts"> <span><strong>Email &amp; calendar</strong> <em class="soon">v2.1</em></span></label>
+          <div id="emailOpts" class="sub" hidden>
+            <label class="choice"><input type="radio" name="emailProvider" value="microsoft"> <span>Microsoft 365 / Outlook</span></label>
+            <label class="choice"><input type="radio" name="emailProvider" value="google"> <span>Google (Gmail / Calendar)</span></label>
+            <label class="choice"><input type="radio" name="emailAccount" value="personal"> <span>Personal account</span></label>
+            <label class="choice"><input type="radio" name="emailAccount" value="work"> <span>Work account</span></label>
+            <p id="workWarning" class="warning" hidden>Check with your IT team before connecting a work account to an AI service — many companies don't allow it.</p>
           </div>
-          <button id="saveModel" class="btn btn-primary" type="button">Save and check</button>
-          <p id="modelResult" class="result" role="status"></p>
-        </li>
-        <li>
-          <h2>2. Voice (optional)</h2>
-          <p>Talk to JARVIS hands-free and interrupt it any time. Speech is processed on this PC; only the recognised text goes to the model.</p>
-          <button id="getVoice" class="btn" type="button">Download voice models (~130 MB)</button>
-          <progress id="voiceProgress" max="100" value="0" hidden></progress>
-          <p id="voiceResult" class="result" role="status"></p>
-          <label class="choice"><input id="voiceOnSetup" type="checkbox"> <span>Start listening for “Hey Jarvis” now</span></label>
-        </li>
-        <li>
-          <h2>3. Safety</h2>
-          <p class="hint">JARVIS only touches files in: <span id="roots"></span>. It asks before deleting, overwriting, running commands, web requests and anything on screen. Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>J</kbd> to stop it instantly.</p>
-        </li>
-      </ol>
-      <div class="setup-actions">
-        <button id="finishSetup" class="btn btn-primary" type="button" disabled>Start using JARVIS</button>
+
+          <label class="choice"><input id="fProtocols" type="checkbox" data-toggles="protocolOpts"> <span><strong>Protocols &amp; daily briefing</strong> — scheduled and triggered workflows <em class="soon">v2.2</em></span></label>
+          <div id="protocolOpts" class="sub" hidden>
+            <label class="field">Morning briefing at <input id="fBriefing" type="time"></label>
+          </div>
+
+          <label class="choice"><input id="fHud" type="checkbox" data-toggles="hudOpts"> <span><strong>HUD overlay</strong> — always-on-top status while JARVIS works <em class="soon">v2.3</em></span></label>
+          <div id="hudOpts" class="sub" hidden>
+            <label class="choice"><input id="fDashboard" type="checkbox"> <span>Full dashboard on my second monitor</span></label>
+          </div>
+
+          <label class="choice"><input id="fPhone" type="checkbox" data-toggles="phoneOpts"> <span><strong>Phone companion</strong> — talk to JARVIS and approve actions from your phone <em class="soon">v2.4</em></span></label>
+          <div id="phoneOpts" class="sub" hidden>
+            <label class="choice"><input type="radio" name="phone" value="android"> <span>Android</span></label>
+            <label class="choice"><input type="radio" name="phone" value="iphone"> <span>iPhone</span></label>
+          </div>
+
+          <label class="choice"><input id="fHelpers" type="checkbox"> <span><strong>Parallel helpers</strong> — split big research tasks across several agents <em class="soon">v2.5</em></span></label>
+
+          <label class="choice"><input id="fHome" type="checkbox" data-toggles="homeOpts"> <span><strong>Smart home</strong> via Home Assistant <em class="soon">v2.6</em></span></label>
+          <div id="homeOpts" class="sub" hidden>
+            <label class="field">Home Assistant address <input id="fHomeUrl" type="url" placeholder="http://homeassistant.local:8123"></label>
+          </div>
+
+          <label class="choice"><input id="fWebcam" type="checkbox"> <span><strong>Webcam vision</strong> — “what am I holding?” (off unless you tick it) <em class="soon">v2.6</em></span></label>
+        </div>
+      </div>
+
+      <!-- 6. Budget -->
+      <div class="step" data-step="6" data-title="Budget">
+        <h2>Budget</h2>
+        <label class="field">Daily API spending limit (USD, 0 = no limit)
+          <input id="bCap" type="number" min="0" max="1000" step="0.5"></label>
+        <p class="hint">An estimate from token usage; JARVIS pauses until midnight when it's reached. Set a hard limit in the Anthropic console too.</p>
+        <fieldset>
+          <legend>Background work (briefings, triggers, helpers) uses</legend>
+          <label class="choice"><input type="radio" name="background" value="fast"> <span>The faster, cheaper model (recommended)</span></label>
+          <label class="choice"><input type="radio" name="background" value="main"> <span>The main model</span></label>
+        </fieldset>
+      </div>
+
+      <!-- 7. Review -->
+      <div class="step" data-step="7" data-title="Review">
+        <h2>Review</h2>
+        <dl id="review" class="review"></dl>
+        <p class="hint">JARVIS only touches files in: <span id="roots"></span>. It asks before deleting, overwriting, running commands, web requests and anything on screen. Press <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>J</kbd> to stop it instantly.</p>
+        <p id="finishResult" class="result" role="status"></p>
+      </div>
+
+      <div class="wizard-nav">
+        <button id="wizBack" class="btn" type="button">Back</button>
+        <span class="spacer"></span>
+        <button id="wizClose" class="btn btn-ghost" type="button" hidden>Close</button>
+        <button id="wizNext" class="btn btn-primary" type="button">Next</button>
       </div>
     </div>
   </section>

@@ -1,5 +1,28 @@
 # Changelog
 
+## 2.0.0 — 2026-09-30
+
+Personalisation and a faster, more natural conversation.
+
+- **Setup wizard and Settings**, per user, in seven steps:
+  - About you, Personality, AI model, Voice, Features, Budget, Review.
+  - Every choice is saved to that user's `config.toml` and applied immediately.
+- **Personality**: four styles and a form of address (sir / ma'am / name / nickname /
+  none). Optional warnings before unwise actions.
+- **Streaming replies**: text appears as it's written, and voice starts speaking at the
+  first complete sentence.
+- **Progress updates**: the model's notes between tool calls are shown in the window, and
+  spoken if you choose. They're requested with `thinking.display = "updates"`; on
+  Claude Opus 5.5 these notes were previously invisible.
+- **Quick replies**: conversational turns are answered by Claude Haiku 4.5. The fast
+  model hands anything that needs action to the full agent.
+- **Voices**: British male (Alan), British female (Jenny), American male (Ryan), American
+  female (Lessac), with a preview button. All are pinned and SHA-256 verified.
+- **Budget**: estimated daily API spend with a hard cap, shown in the top bar.
+- **Future features** (web research, documents, email and calendar, protocols, HUD, phone,
+  helpers, smart home, webcam) can be chosen now. They switch on as versions 2.1–2.6
+  ship.
+
 ## 1.0.0 — 2026-09-30
 
 First release: an AI control layer for Windows that you can talk to.

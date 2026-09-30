@@ -4,8 +4,8 @@ An AI control layer for Windows. Give it a goal in plain language — by voice o
 plans the steps, operates your apps, files, browser and terminal, watches the screen to verify
 each step, and reports back. Full-duplex voice means you can interrupt it mid-sentence.
 
-> **Version 1.0.** A desktop app with a tray icon, full-duplex voice, screen control,
-> memory and saved workflows. Talk to JARVIS, interrupt it mid-sentence, and change your
+> **Version 2.0.** A desktop app with a tray icon, full-duplex voice, screen control,
+> memory and saved workflows, now personalised to each user by a setup wizard. Talk to JARVIS, interrupt it mid-sentence, and change your
 > instruction on the fly. It plans and works through files, Office documents, email drafts,
 > the shell, the web and any app on screen, under a safety layer, and tells you what it did.
 > See [CHANGELOG.md](CHANGELOG.md).
@@ -22,8 +22,10 @@ memory and saved workflows are on the left.
 
 ![JARVIS main window](docs/screenshots/main.png)
 
-**First-run setup:** choose the model, optionally download the voice models, and review
-the safety rules.
+**First-run setup (v2.0):** a seven-step wizard that sets your name, how JARVIS addresses
+you, its personality, the model, the voice and your features and budget. Each feature is a
+tick box; the ones arriving in later versions are saved now and switch on when they
+ship.
 
 ![JARVIS setup screen](docs/screenshots/setup.png)
 
@@ -239,6 +241,32 @@ jarvis voice            # hands-free session: say "Hey Jarvis, ..."
 | `voice.barge_in` | `true` | talking over JARVIS interrupts it |
 | `voice.follow_up_s` | `8` | seconds to keep listening after JARVIS speaks |
 | `voice.input_device` / `output_device` | system default | see `jarvis voice devices` |
+
+## Personalisation (v2.0)
+
+Every user sets JARVIS up for themselves on first run. Everything can be changed later
+under **Settings**, and changes take effect immediately.
+
+| Step | Choices |
+|---|---|
+| About you | Your name; address you as Sir, Ma'am, your first name, a nickname, or nothing |
+| Personality | JARVIS (calm, dry wit), Professional, Friendly or Minimal. Warn before unwise actions. Spoken progress updates. Instant quick replies |
+| AI model | Claude (API key checked before saving) or offline Ollama |
+| Voice | British male/female or American male/female, each with a **▶ Preview**. Speed. Hands-free "Hey Jarvis" |
+| Features | Web research, Ask my documents, Email & calendar (Microsoft/Google, personal/work), Protocols & daily briefing, HUD, Phone companion (Android/iPhone), Parallel helpers, Smart home, Webcam. The version badge shows when each one arrives |
+| Budget | Daily API spending limit, and which model background work uses |
+
+What 2.0 changes in practice:
+- **JARVIS talks back sooner.** Replies stream as they're written, and speech starts at
+  the first finished sentence instead of after the whole answer.
+- **Quick replies.** Small talk and simple questions are answered by a fast model
+  (Claude Haiku 4.5) with no planning step. Anything that needs action goes to the full
+  agent automatically.
+- **Progress notes.** Between steps of a long task, JARVIS writes short progress notes
+  ("Found 12 invoices; moving them now"). They're shown in the window, and spoken if you
+  chose spoken progress updates.
+- **Spend tracking.** The top bar shows today's estimated spend against your limit. At the
+  limit, JARVIS stops calling the API until midnight.
 
 ## Screen control (M2)
 

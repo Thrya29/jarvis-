@@ -82,7 +82,16 @@ def build_voice(
 
     holder: dict[str, VoiceAssistant] = {}
     player = Player(on_idle=lambda: holder["va"].player_idle())
-    assistant = VoiceAssistant(v, stt, tts, player, chime=tone(), log_line=log_line)
+    assistant = VoiceAssistant(
+        v,
+        stt,
+        tts,
+        player,
+        chime=tone(),
+        log_line=log_line,
+        speak_progress=settings.persona.progress_updates,
+        addressee=settings.profile.addressee(),
+    )
     holder["va"] = assistant
 
     wake = None
@@ -150,7 +159,9 @@ async def run_voice(settings: Settings, paths: AppPaths) -> int:
         print(text, flush=True)
 
     try:
-        provider = create_provider(settings.llm)
+        from jarvis.agent.factory import open_meter
+
+        provider = create_provider(settings.llm, open_meter(settings, paths))
     except LLMError as exc:
         print(exc, file=sys.stderr)
         return 2
