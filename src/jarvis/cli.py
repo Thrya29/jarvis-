@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+import contextlib
 import getpass
+import io
 import json
 import logging
 import platform
+import signal
 import socket
 import sys
+import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Sequence
@@ -108,6 +113,17 @@ def run_checks(paths: AppPaths) -> list[Check]:
     ok, detail = _ollama_reachable(settings.llm.ollama.host)
     checks.append(Check("ollama", ok, detail, required=provider is LLMProvider.OLLAMA))
 
+    missing = [str(r) for r in settings.safety.allowed_roots if not r.is_dir()]
+    checks.append(
+        Check(
+            "allowed roots",
+            not missing,
+            f"missing: {', '.join(missing)}"
+            if missing
+            else f"{len(settings.safety.allowed_roots)} folders",
+        )
+    )
+
     free = _port_free(settings.server.host, settings.server.port)
     checks.append(
         Check(
@@ -160,6 +176,98 @@ def cmd_secret(args: argparse.Namespace, paths: AppPaths) -> int:
     return 0
 
 
+async def _run_goals(goals: list[str] | None, paths: AppPaths, assume_no: bool) -> int:
+    from jarvis.agent.factory import build_agent
+    from jarvis.agent.loop import TaskResult, TaskStatus
+    from jarvis.interfaces.console import ConsoleApprover, print_event
+    from jarvis.llm import LLMError
+
+    settings = _load_or_exit()
+    configure_logging(settings.logging, paths.log_dir, console=False)
+    try:
+        agent, provider = build_agent(settings, paths, ConsoleApprover(assume_no), print_event)
+    except LLMError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    loop = asyncio.get_running_loop()
+    running: asyncio.Task[TaskResult] | None = None
+
+    def on_sigint(signum: int, frame: object) -> None:
+        # Ctrl+C cancels the task in progress; when idle it exits.
+        if running is not None and not running.done():
+            loop.call_soon_threadsafe(running.cancel)
+        else:
+            raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGINT, on_sigint)
+    try:
+        if goals is not None:
+            status = TaskStatus.COMPLETED
+            for goal in goals:
+                running = asyncio.create_task(agent.run(goal))
+                try:
+                    status = (await running).status
+                except asyncio.CancelledError:
+                    return 130
+            return 0 if status is TaskStatus.COMPLETED else 1
+        print(
+            f"JARVIS {__version__} ({provider.name}). Type a goal or 'exit'; Ctrl+C stops a task."
+        )
+        while True:
+            line = await _read_line("\nyou> ")
+            if line is None or line.strip().lower() in {"exit", "quit"}:
+                return 0
+            if not line.strip():
+                continue
+            running = asyncio.create_task(agent.run(line.strip()))
+            with contextlib.suppress(asyncio.CancelledError):
+                await running
+    finally:
+        signal.signal(signal.SIGINT, previous)
+        await provider.aclose()
+
+
+async def _read_line(prompt: str) -> str | None:
+    """input() on a daemon thread, so an idle Ctrl+C can exit without waiting for Enter."""
+    loop = asyncio.get_running_loop()
+    fut: asyncio.Future[str | None] = loop.create_future()
+
+    def reader() -> None:
+        try:
+            value: str | None = input(prompt)
+        except (EOFError, KeyboardInterrupt):
+            value = None
+
+        def deliver() -> None:
+            if not fut.done():
+                fut.set_result(value)
+
+        loop.call_soon_threadsafe(deliver)
+
+    threading.Thread(target=reader, daemon=True).start()
+    return await fut
+
+
+def cmd_do(args: argparse.Namespace, paths: AppPaths) -> int:
+    return asyncio.run(_run_goals([" ".join(args.goal)], paths, args.no))
+
+
+def cmd_chat(args: argparse.Namespace, paths: AppPaths) -> int:
+    try:
+        return asyncio.run(_run_goals(None, paths, False))
+    except KeyboardInterrupt:
+        return 130
+
+
+def cmd_pyexec(args: argparse.Namespace, paths: AppPaths) -> int:
+    """Run a script with the bundled interpreter (used by run_python in frozen builds)."""
+    import runpy
+
+    sys.argv = [args.script]
+    runpy.run_path(args.script, run_name="__main__")
+    return 0
+
+
 def cmd_version(args: argparse.Namespace, paths: AppPaths) -> int:
     print(f"jarvis {__version__}")
     return 0
@@ -172,6 +280,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("run", help="start the JARVIS daemon").set_defaults(func=cmd_run)
     sub.add_parser("doctor", help="diagnose the installation").set_defaults(func=cmd_doctor)
     sub.add_parser("version", help="print version").set_defaults(func=cmd_version)
+
+    p_do = sub.add_parser("do", help="accomplish one goal, then exit")
+    p_do.add_argument("goal", nargs="+", help="what you want done, in plain language")
+    p_do.add_argument("--no", action="store_true", help="decline every approval prompt")
+    p_do.set_defaults(func=cmd_do)
+    sub.add_parser("chat", help="interactive session in the terminal").set_defaults(func=cmd_chat)
+
+    p_exec = sub.add_parser("_pyexec")  # internal
+    p_exec.add_argument("script")
+    p_exec.set_defaults(func=cmd_pyexec)
 
     p_cfg = sub.add_parser("config", help="inspect or initialise configuration")
     p_cfg.add_argument("action", choices=["show", "path", "init"])
@@ -186,6 +304,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(errors="replace")
     args = build_parser().parse_args(argv)
     paths = get_paths().ensure()
     func: Callable[[argparse.Namespace, AppPaths], int] = args.func

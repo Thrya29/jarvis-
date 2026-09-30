@@ -32,6 +32,14 @@ JARVIS is a single Windows process (the **daemon**) that hosts every subsystem, 
 | `src/jarvis/core/audit.py` | Append-only JSONL record of actions |
 | `src/jarvis/server/app.py` | FastAPI app: `/health`, `/v1/status`, `/v1/ws` |
 | `src/jarvis/server/daemon.py` | Wires the above together and runs uvicorn |
+| `src/jarvis/llm/` | Provider-neutral interface; `anthropic_provider.py` (Claude: streaming, adaptive thinking, refusal fallback), `ollama_provider.py` |
+| `src/jarvis/agent/loop.py` | The agent loop: turns, tool dispatch, retries, limits, cancellation |
+| `src/jarvis/agent/prompts.py` | Cache-stable system prompt; per-goal context goes in the user turn |
+| `src/jarvis/agent/factory.py` | Builds an agent (guard, registry, tools, provider) from settings |
+| `src/jarvis/safety/policy.py` | Risk tiers, `needs_approval`, `PathGuard`, `Approver` protocol |
+| `src/jarvis/tools/` | Tool contract + registry pipeline, and the file, Office, email, execution and web tools |
+| `src/jarvis/server/session.py` | Per-client agent session over WebSocket; approvals round-trip to the client |
+| `src/jarvis/interfaces/console.py` | Terminal renderer and approver for `jarvis do` / `jarvis chat` |
 | `packaging/` | PyInstaller spec, Inno Setup installer script |
 
 ## Key decisions
@@ -53,6 +61,38 @@ JARVIS is a single Windows process (the **daemon**) that hosts every subsystem, 
 1. Client connects to `ws://127.0.0.1:8765/v1/ws`.
 2. First frame within 5 s: `{"type": "auth", "token": "<token>"}` else close code `4401`.
 3. Server replies `{"type": "ready", "version": "..."}`.
-4. `{"type": "ping"}` → `{"type": "pong"}`. Task, event and approval messages arrive in M1.
+4. Client → server:
+   - `{"type": "task.start", "goal": "..."}` starts a task (one at a time per machine).
+   - `{"type": "task.cancel"}` cancels it.
+   - `{"type": "approval.response", "id": "...", "approved": true|false, "note": "..."}`
+   - `{"type": "ask.response", "id": "...", "answer": "..."}`
+   - `{"type": "ping"}` → `{"type": "pong"}`
+5. Server → client events: `task.started`, `plan.updated`, `assistant.text`, `tool.started`,
+   `tool.finished`, `approval.request` (`risk`, `summary`, `details`), `ask.request`,
+   `task.finished` (`status`: completed | failed | cancelled | refused | limit_reached),
+   `error`. Unanswered approvals are declined after 5 minutes, or at once if the client
+   disconnects.
+
+## Tool call pipeline
+
+Every tool call goes through `ToolRegistry.execute` in this order:
+1. Validate the input (pydantic).
+2. Compute the risk tier (it can depend on the arguments, e.g. overwrite).
+3. Enforce `PathGuard`, then ask for approval if the tier requires it.
+4. Write to the audit log.
+5. Run with a timeout.
+6. Wrap untrusted output in a fence, truncate it, and write the audit log again.
+
+Failures come back to the model as error results; they never crash the task.
+
+## Agent loop invariants
+
+- The conversation is append-only. Claude's assistant content, including thinking blocks, is
+  replayed unchanged, which keeps thinking valid and the prompt cache warm.
+- Every `tool_use` gets exactly one `tool_result`, in one message, even when a task is
+  cancelled, times out or fails midway. The session stays usable for follow-up goals.
+- Tool calls cut off by `max_tokens` are never executed.
+- Retryable model errors (rate limits, 5xx, network, unparseable streamed tool input) are
+  retried twice with backoff; others end the task with a clear message.
 
 The token is stored at `<data dir>/api-token` and created on first run.

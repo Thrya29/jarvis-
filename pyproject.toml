@@ -1,6 +1,6 @@
 [project]
 name = "jarvis"
-version = "0.1.0"
+version = "0.2.0"
 description = "JARVIS - an AI control layer for Windows: voice, vision, and computer control."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
@@ -20,6 +20,13 @@ dependencies = [
     "uvicorn>=0.32",
     "websockets>=13.1",
     "tomli-w>=1.1",
+    "anthropic>=1.9.0",
+    "httpx2>=2.13.1",
+    "openpyxl>=3.1.5",
+    "python-docx>=1.2.0",
+    "pypdf>=6.19.0",
+    "send2trash>=2.1.0",
+    "pywin32>=308 ; sys_platform == 'win32'",
 ]
 
 [project.scripts]
@@ -33,6 +40,8 @@ dev = [
     "ruff>=0.7",
     "mypy>=1.13",
     "pyinstaller>=6.11",
+    "types-openpyxl>=3.1.5.20260827",
+    "types-pywin32>=312.0.0.20260928",
 ]
 
 [build-system]
@@ -62,7 +71,7 @@ packages = ["jarvis"]
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["keyring.*"]
+module = ["keyring.*", "send2trash.*", "docx.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

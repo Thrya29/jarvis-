@@ -1,14 +1,15 @@
 # PyInstaller spec - builds dist/jarvis/jarvis.exe (one-folder, fast startup).
 # Usage: uv run pyinstaller packaging/jarvis.spec --noconfirm
 # ruff: noqa
-from PyInstaller.utils.hooks import collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
 
 hiddenimports = (
     collect_submodules("uvicorn")
     + collect_submodules("jarvis")
-    + ["keyring.backends.Windows"]
+    + ["keyring.backends.Windows", "win32com.client", "pythoncom"]
 )
-datas = copy_metadata("jarvis")
+# python-docx ships its default template as package data; anthropic reads its own metadata.
+datas = copy_metadata("jarvis") + copy_metadata("anthropic") + collect_data_files("docx")
 
 a = Analysis(
     ["../src/jarvis/__main__.py"],

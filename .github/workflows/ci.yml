@@ -52,6 +52,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           ./dist/jarvis/jarvis.exe config init
           if ($LASTEXITCODE -ne 0) { exit 1 }
+          # The bundled interpreter used by run_python must have the Office libraries.
+          $script = Join-Path $env:RUNNER_TEMP "smoke.py"
+          $doc = Join-Path $env:RUNNER_TEMP "smoke.docx"
+          "import docx, openpyxl, pypdf`ndocx.Document().save(r'$doc')`nprint('ok')" | Set-Content -Encoding utf8 $script
+          ./dist/jarvis/jarvis.exe _pyexec $script
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $doc)) { exit 1 }
       - uses: actions/upload-artifact@v4
         with:
           name: jarvis-windows-x64

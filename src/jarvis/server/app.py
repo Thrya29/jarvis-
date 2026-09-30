@@ -16,14 +16,18 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from jarvis import __version__
 from jarvis.core.config import Settings
+from jarvis.server.session import AgentFactory, ClientSession
 
 WS_AUTH_TIMEOUT_S = 5.0
 
 
-def create_app(settings: Settings, token: str) -> FastAPI:
+def create_app(
+    settings: Settings, token: str, agent_factory: AgentFactory | None = None
+) -> FastAPI:
     app = FastAPI(title="JARVIS", version=__version__, docs_url=None, redoc_url=None)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
     started = time.monotonic()
+    machine_lock = asyncio.Lock()  # one task drives the desktop at a time
 
     def token_ok(candidate: str | None) -> bool:
         return candidate is not None and hmac.compare_digest(candidate, token)
@@ -44,6 +48,8 @@ def create_app(settings: Settings, token: str) -> FastAPI:
             "uptime_s": round(time.monotonic() - started, 1),
             "llm_provider": settings.llm.provider.value,
             "voice_enabled": settings.voice.enabled,
+            "agent_available": agent_factory is not None,
+            "busy": machine_lock.locked(),
         }
 
     @app.websocket("/v1/ws")
@@ -62,15 +68,22 @@ def create_app(settings: Settings, token: str) -> FastAPI:
         ):
             await websocket.close(code=4401)
             return
-        await websocket.send_json({"type": "ready", "version": __version__})
+        session = ClientSession(websocket, agent_factory, machine_lock)
+        await session.send({"type": "ready", "version": __version__})
         try:
             while True:
-                msg = await websocket.receive_json()
-                if isinstance(msg, dict) and msg.get("type") == "ping":
-                    await websocket.send_json({"type": "pong"})
+                try:
+                    msg = await websocket.receive_json()
+                except ValueError:
+                    await session.send({"type": "error", "error": "invalid JSON"})
+                    continue
+                if isinstance(msg, dict):
+                    await session.handle(msg)
                 else:
-                    await websocket.send_json({"type": "error", "error": "unsupported message"})
+                    await session.send({"type": "error", "error": "expected a JSON object"})
         except WebSocketDisconnect:
-            return
+            pass
+        finally:
+            await session.close()
 
     return app
