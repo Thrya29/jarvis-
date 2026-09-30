@@ -10,6 +10,25 @@ each step, and reports back. Full-duplex voice means you can interrupt it mid-se
 > the shell, the web and any app on screen, under a safety layer, and tells you what it did.
 > See [CHANGELOG.md](CHANGELOG.md).
 
+## Screenshots
+
+**At work:** the live plan, the activity feed, and an approval before anything risky. The
+request here came by voice.
+
+![JARVIS working on a task and asking for approval](docs/screenshots/task.png)
+
+**Home:** type a goal, or say "Hey Jarvis". History (with Resume for interrupted tasks),
+memory and saved workflows are on the left.
+
+![JARVIS main window](docs/screenshots/main.png)
+
+**First-run setup:** choose the model, optionally download the voice models, and review
+the safety rules.
+
+![JARVIS setup screen](docs/screenshots/setup.png)
+
+<sub>Rendered from the app's actual UI code with sample data.</sub>
+
 ## Quick start
 
 You need **one key: an Anthropic API key** (or nothing, if you use offline Ollama).
