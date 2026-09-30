@@ -10,11 +10,12 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 from typing import Any
 
 import anthropic
-from anthropic.types.beta import BetaMessage, BetaMessageParam, BetaToolParam
+from anthropic.types.beta import BetaMessage, BetaMessageParam
 
 from jarvis.core.config import AnthropicConfig
 from jarvis.llm.base import (
@@ -30,6 +31,23 @@ from jarvis.llm.base import (
 log = logging.getLogger(__name__)
 
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
+CONTEXT_BETA = "context-management-2025-06-27"
+COMPUTER_TOOLSET = "computer_toolset_20260801"
+
+# Long screen-driving tasks accumulate screenshots. Old tool results are cleared
+# server-side (the client history stays append-only, so thinking blocks stay valid);
+# clearing in large batches keeps the prompt cache effective between clears.
+CONTEXT_MANAGEMENT = {
+    "edits": [
+        {
+            "type": "clear_tool_uses_20250919",
+            "trigger": {"type": "input_tokens", "value": 80_000},
+            "keep": {"type": "tool_uses", "value": 8},
+            "clear_at_least": {"type": "input_tokens", "value": 20_000},
+            "exclude_tools": ["update_plan"],
+        }
+    ]
+}
 
 _STOP_MAP = {
     "end_turn": StopKind.END,
@@ -41,6 +59,34 @@ _STOP_MAP = {
 }
 
 
+def _tool_result(r: ToolOutcome) -> dict[str, Any]:
+    block: dict[str, Any] = {
+        "type": "tool_result",
+        "tool_use_id": r.call_id,
+        "is_error": r.is_error,
+    }
+    if r.images:
+        content: list[dict[str, Any]] = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": base64.standard_b64encode(png).decode("ascii"),
+                },
+            }
+            for png in r.images
+        ]
+        if r.content:
+            content.append({"type": "text", "text": r.content})
+        block["content"] = content
+    else:
+        block["content"] = r.content
+    if r.toolset:
+        block["toolset_name"] = r.toolset  # every toolset result must echo it
+    return block
+
+
 class AnthropicConversation:
     def __init__(
         self,
@@ -48,6 +94,7 @@ class AnthropicConversation:
         cfg: AnthropicConfig,
         system: str,
         tools: list[ToolSpec],
+        computer_use: bool = False,
     ) -> None:
         self._client = client
         self._cfg = cfg
@@ -55,7 +102,7 @@ class AnthropicConversation:
         self._system: list[dict[str, Any]] = [
             {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
         ]
-        self._tools: list[BetaToolParam] = [
+        self._tools: list[dict[str, Any]] = [
             {
                 "name": t.name,
                 "description": t.description,
@@ -65,6 +112,9 @@ class AnthropicConversation:
             }
             for t in tools
         ]
+        if computer_use:
+            # All 17 members (screenshot, clicks, type, key, scroll, zoom, ...) enabled.
+            self._tools.append({"type": COMPUTER_TOOLSET})
         self.messages: list[BetaMessageParam] = []
 
     def add_user(self, text: str) -> None:
@@ -75,15 +125,7 @@ class AnthropicConversation:
         self.messages.append(
             {
                 "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": r.call_id,
-                        "content": r.content,
-                        "is_error": r.is_error,
-                    }
-                    for r in results
-                ],
+                "content": [_tool_result(r) for r in results],  # type: ignore[misc]
             }
         )
 
@@ -98,8 +140,10 @@ class AnthropicConversation:
             # Cache the growing conversation prefix between agent turns.
             "cache_control": {"type": "ephemeral"},
         }
+        kwargs["betas"] = [CONTEXT_BETA]
+        kwargs["context_management"] = CONTEXT_MANAGEMENT
         if self._cfg.server_fallback:
-            kwargs["betas"] = [FALLBACK_BETA]
+            kwargs["betas"].append(FALLBACK_BETA)
             kwargs["fallbacks"] = "default"
         try:
             async with self._client.beta.messages.stream(**kwargs) as stream:
@@ -142,7 +186,12 @@ class AnthropicConversation:
         self.messages.append({"role": "assistant", "content": message.content})
         text = "".join(b.text for b in message.content if b.type == "text")
         calls = [
-            ToolCall(b.id, b.name, b.input if isinstance(b.input, dict) else {})
+            ToolCall(
+                b.id,
+                b.name,
+                b.input if isinstance(b.input, dict) else {},
+                getattr(b, "toolset_name", None),
+            )
             for b in message.content
             if b.type == "tool_use"
         ]
@@ -151,13 +200,16 @@ class AnthropicConversation:
 
 class AnthropicProvider:
     name = "anthropic"
+    supports_computer_use = True
 
     def __init__(self, cfg: AnthropicConfig, api_key: str | None) -> None:
         self._cfg = cfg
         self._client = anthropic.AsyncAnthropic(api_key=api_key, timeout=cfg.timeout_s)
 
-    def new_conversation(self, system: str, tools: list[ToolSpec]) -> AnthropicConversation:
-        return AnthropicConversation(self._client, self._cfg, system, tools)
+    def new_conversation(
+        self, system: str, tools: list[ToolSpec], computer_use: bool = False
+    ) -> AnthropicConversation:
+        return AnthropicConversation(self._client, self._cfg, system, tools, computer_use)
 
     async def check(self) -> tuple[bool, str]:
         try:

@@ -16,6 +16,7 @@ from fastapi import WebSocket
 
 from jarvis.agent.events import Event, EventSink
 from jarvis.agent.loop import Agent
+from jarvis.memory.store import RESUMABLE, resume_goal
 from jarvis.safety.policy import ApprovalDecision, ApprovalRequest, Approver
 
 log = logging.getLogger(__name__)
@@ -79,11 +80,43 @@ class WebSocketApprover:
                 fut.set_result({"approved": False, "note": "client disconnected"})
 
 
+class TaskBoard:
+    """Machine-wide task state: one task at a time, and a way to stop everything."""
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.tasks: set[asyncio.Task[Any]] = set()
+        self._kill_hooks: list[Callable[[], None]] = []
+
+    @property
+    def busy(self) -> bool:
+        return self.lock.locked()
+
+    def track(self, task: asyncio.Task[Any]) -> None:
+        self.tasks.add(task)
+        task.add_done_callback(self.tasks.discard)
+
+    def on_kill(self, hook: Callable[[], None]) -> None:
+        """Extra things to silence on the kill switch (e.g. speech playback)."""
+        self._kill_hooks.append(hook)
+
+    def cancel_all(self) -> int:
+        live = [t for t in self.tasks if not t.done()]
+        for t in live:
+            t.cancel()
+        for hook in self._kill_hooks:
+            try:
+                hook()
+            except Exception:
+                log.exception("kill hook failed")
+        return len(live)
+
+
 class ClientSession:
-    def __init__(self, ws: WebSocket, factory: AgentFactory | None, machine_lock: asyncio.Lock):
+    def __init__(self, ws: WebSocket, factory: AgentFactory | None, board: TaskBoard):
         self._ws = ws
         self._send_lock = asyncio.Lock()
-        self._machine_lock = machine_lock
+        self._board = board
         self.approver = WebSocketApprover(self.send)
         self._agent = factory(self.approver, self.send) if factory else None
         self._task: asyncio.Task[None] | None = None
@@ -99,6 +132,8 @@ class ClientSession:
             await self.send({"type": "pong"})
         elif kind == "task.start":
             await self._start(str(msg.get("goal") or "").strip())
+        elif kind == "task.resume":
+            await self._resume(str(msg.get("task_id") or ""))
         elif kind == "task.cancel":
             if self._task and not self._task.done():
                 self._task.cancel()
@@ -107,21 +142,32 @@ class ClientSession:
         else:
             await self.send({"type": "error", "error": f"unsupported message type {kind!r}"})
 
-    async def _start(self, goal: str) -> None:
+    async def _resume(self, task_id: str) -> None:
+        store = self._agent.store if self._agent is not None else None
+        task = store.task(task_id) if store is not None else None
+        if task is None:
+            await self.send({"type": "error", "error": f"no task {task_id!r}"})
+        elif task.status not in RESUMABLE:
+            await self.send({"type": "error", "error": f"task is {task.status}; nothing to resume"})
+        else:
+            await self._start(resume_goal(task), resumed_from=task.id)
+
+    async def _start(self, goal: str, resumed_from: str | None = None) -> None:
         if self._agent is None:
             await self.send({"type": "error", "error": "agent unavailable - run `jarvis doctor`"})
         elif not goal:
             await self.send({"type": "error", "error": "goal is empty"})
-        elif self._machine_lock.locked():
+        elif self._board.busy:
             await self.send({"type": "error", "error": "another task is already running"})
         else:
             agent = self._agent
 
             async def run() -> None:
-                async with self._machine_lock:
-                    await agent.run(goal)
+                async with self._board.lock:
+                    await agent.run(goal, resumed_from=resumed_from)
 
             self._task = asyncio.create_task(run())
+            self._board.track(self._task)
 
     async def close(self) -> None:
         self.approver.cancel_all()
@@ -129,3 +175,5 @@ class ClientSession:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
+        if self._agent is not None:
+            self._agent.close()

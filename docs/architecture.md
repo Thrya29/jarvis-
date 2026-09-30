@@ -40,6 +40,13 @@ JARVIS is a single Windows process (the **daemon**) that hosts every subsystem, 
 | `src/jarvis/tools/` | Tool contract + registry pipeline, and the file, Office, email, execution and web tools |
 | `src/jarvis/server/session.py` | Per-client agent session over WebSocket; approvals round-trip to the client |
 | `src/jarvis/interfaces/console.py` | Terminal renderer and approver for `jarvis do` / `jarvis chat` |
+| `src/jarvis/desktop/winapi.py` | ctypes: DPI awareness, `SendInput` mouse/keyboard, window geometry |
+| `src/jarvis/desktop/screen.py` | Monitor capture (mss), downscaling, screenshot-to-screen coordinate mapping, zoom |
+| `src/jarvis/desktop/computer.py` | Executes the 17 members of Claude's `computer_toolset_20260801` |
+| `src/jarvis/desktop/uia.py` | UI Automation service on a dedicated COM thread: windows, control trees, patterns, app launch |
+| `src/jarvis/desktop/session.py` | Per-task screen-control consent and protected-window checks |
+| `src/jarvis/desktop/killswitch.py` | Global kill hotkey on its own Win32 message loop |
+| `src/jarvis/tools/desktop.py` | Model-agnostic desktop tools built on the UIA service |
 | `packaging/` | PyInstaller spec, Inno Setup installer script |
 
 ## Key decisions
@@ -64,6 +71,8 @@ JARVIS is a single Windows process (the **daemon**) that hosts every subsystem, 
 4. Client → server:
    - `{"type": "task.start", "goal": "..."}` starts a task (one at a time per machine).
    - `{"type": "task.cancel"}` cancels it.
+   - `{"type": "task.resume", "task_id": "..."}` resumes an interrupted, cancelled,
+     failed or limit-reached task from the journal.
    - `{"type": "approval.response", "id": "...", "approved": true|false, "note": "..."}`
    - `{"type": "ask.response", "id": "...", "answer": "..."}`
    - `{"type": "ping"}` → `{"type": "pong"}`
@@ -84,6 +93,63 @@ Every tool call goes through `ToolRegistry.execute` in this order:
 6. Wrap untrusted output in a fence, truncate it, and write the audit log again.
 
 Failures come back to the model as error results; they never crash the task.
+
+## Screen control
+
+- Claude gets the `computer_toolset_20260801` entry (no beta header). Its calls are `tool_use`
+  blocks named after the member (`left_click`, `type`, ...) with `toolset_name: "computer"`,
+  often several per turn. JARVIS runs them in order. After the first failure it answers the
+  rest with the exact halt text, and every result echoes `toolset_name`.
+- Screenshots are downscaled to `desktop.max_screenshot_edge` (default 1366 px, hard cap
+  2000 px). Coordinates are mapped back to physical pixels. The process is per-monitor-v2
+  DPI aware, so screenshots, `SendInput` and UI Automation rectangles agree.
+- History stays append-only; old screenshots are removed server-side by context editing
+  (`clear_tool_uses_20250919`, cleared in large batches). This never invalidates thinking
+  blocks.
+- Every model gets the UI Automation tools. Text-only local models can operate standard apps
+  through them; they don't get pixel control.
+
+## Memory, workflows and the task journal
+
+`memory/store.py` keeps one SQLite database (WAL mode) with three parts:
+- `memories` with an FTS5 index (Porter stemming, BM25 ranking).
+- `workflows`: named instructions with `{parameter}` placeholders.
+- `tasks`: goal, status, plan snapshot, summary, and the owning process id.
+
+How it's used:
+- Each goal carries a `<memory>` block with all preferences plus the best keyword matches,
+  capped by `memory.context_items`. It goes in the user turn, so the cached system prompt
+  never changes.
+- The agent journals task start, plan updates and finish. Journal errors are logged, never
+  fatal.
+- At startup, `running` tasks whose process is no longer alive become `interrupted`. Tasks
+  owned by another live JARVIS process are left alone.
+- Resuming starts a new task linked by `resumed_from`. Its goal restates the original
+  request, the last plan and the outcome, and asks the model to check the current state
+  before repeating any step.
+
+## Voice pipeline
+
+```
+mic 16 kHz ─► WebRTC APM (AEC + NS + HPF) ─┬─► openWakeWord ("hey jarvis", 80 ms steps)
+   ▲ speaker reference (22.05→16 kHz)       └─► Silero VAD (32 ms) ─► Segmenter
+   │                                              speech_start / pause / resume / utterance
+Player ◄── Piper TTS (sentence by sentence)          │
+   ▲                                                  ▼
+   └────────────── VoiceAssistant (asyncio) ◄── faster-whisper base.en (int8, CPU)
+                          │  ▲
+                 goals ───┘  └── agent events (spoken), approvals (asked aloud)
+```
+
+- `voice/audio.py`: PortAudio streams, the playback buffer (instant pause, resume or clear),
+  the AEC reference path and the front-end thread.
+- `voice/vad.py`: the Silero VAD wrapper and the segmenter state machine. It fires
+  `speech_start` after 160 ms of speech, a speculative `pause` after 250 ms of silence,
+  `resume` if speech continues, and `utterance` after 700 ms of silence.
+- `voice/wake.py`: openWakeWord's mel → embedding → classifier pipeline on onnxruntime,
+  with scores matching the reference package.
+- `voice/engine.py`: the conversation state machine (see its module docstring).
+- `voice/models.py`: pinned, hash-verified model downloads into the cache directory.
 
 ## Agent loop invariants
 

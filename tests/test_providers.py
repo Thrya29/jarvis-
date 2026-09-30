@@ -8,7 +8,7 @@ import pytest
 from anthropic.types.beta import BetaMessage
 
 from jarvis.core.config import AnthropicConfig, OllamaConfig
-from jarvis.llm.anthropic_provider import FALLBACK_BETA, AnthropicProvider
+from jarvis.llm.anthropic_provider import CONTEXT_BETA, FALLBACK_BETA, AnthropicProvider
 from jarvis.llm.base import LLMError, StopKind, ToolOutcome, ToolSpec
 from jarvis.llm.ollama_provider import OllamaProvider
 
@@ -77,7 +77,9 @@ async def test_anthropic_request_shape_and_tool_turn(monkeypatch: pytest.MonkeyP
     req = sent[0]
     assert req["model"] == "claude-opus-5-5"
     assert req["output_config"] == {"effort": "high"}
-    assert req["fallbacks"] == "default" and req["betas"] == [FALLBACK_BETA]
+    assert req["fallbacks"] == "default" and req["betas"] == [CONTEXT_BETA, FALLBACK_BETA]
+    assert req["context_management"]["edits"][0]["type"] == "clear_tool_uses_20250919"
+    assert all(t.get("type") != "computer_toolset_20260801" for t in req["tools"])
     assert "thinking" not in req and "tool_choice" not in req
     assert req["tools"][0]["eager_input_streaming"] is True
     assert req["system"][0]["cache_control"] == {"type": "ephemeral"}
@@ -127,7 +129,7 @@ async def test_fallback_can_be_disabled(monkeypatch: pytest.MonkeyPatch) -> None
     conv = provider.new_conversation("S", TOOLS)
     conv.add_user("x")
     await conv.step()
-    assert "fallbacks" not in sent[0] and "betas" not in sent[0]
+    assert "fallbacks" not in sent[0] and sent[0]["betas"] == [CONTEXT_BETA]
 
 
 def _ollama(handler: Any) -> OllamaProvider:

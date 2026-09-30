@@ -4,10 +4,11 @@ An AI control layer for Windows. Give it a goal in plain language — by voice o
 plans the steps, operates your apps, files, browser and terminal, watches the screen to verify
 each step, and reports back. Full-duplex voice means you can interrupt it mid-sentence.
 
-> **Status:** V1 in development. **M0 (foundation)** and **M1 (agent core)** are complete:
-> JARVIS takes a goal, plans it, works through files, Office documents, email drafts, the shell
-> and the web under a safety layer, and reports back. Screen control and voice are next. See
-> the [roadmap](#roadmap).
+> **Status:** V1 in development. **M0 (foundation)**, **M1 (agent core)**, **M2 (screen
+> control)**, **M3 (full-duplex voice)** and **M4 (memory and workflows)** are complete. Talk to JARVIS, interrupt it
+> mid-sentence, and change your instruction on the fly. It plans and works through files,
+> Office documents, email drafts, the shell, the web and any app on screen, under a safety
+> layer, and tells you what it did. See the [roadmap](#roadmap).
 
 ## Requirements
 
@@ -67,6 +68,90 @@ front-ends (M3, M5) connect to.
 
 File tools only work inside `safety.allowed_roots` (default: Documents, Desktop, Downloads).
 
+## Memory, workflows and task history (M4)
+
+- **Memory.** Tell JARVIS "remember that I prefer reports as PDF" and it saves a note. Your
+  preferences and the notes relevant to each request are shown to the model with every
+  goal. Saving or changing a memory asks you first (`memory.confirm_writes`).
+  Passwords, keys, card numbers and codes are refused outright.
+- **Workflows.** After a task goes well, say "save this as a workflow called weekly report".
+  Later: "run my weekly report workflow for the Falcon folder". Workflows can take
+  parameters, and you approve the saved instructions when they're created.
+- **Task history and resume.** Every task is journaled with its plan and outcome. If JARVIS
+  is closed or crashes mid-task, the task is marked *interrupted*, and you can pick it up
+  again. JARVIS checks what's already done before continuing.
+
+```powershell
+jarvis memory list | search <words> | forget <id> | clear
+jarvis workflows [list] | show <name> | run <name> key=value ... | delete <name>
+jarvis tasks [list] | resume <task-id>
+```
+
+Everything is stored in one SQLite file (`%LOCALAPPDATA%\Jarvis\Jarvis\jarvis.db`) that
+JARVIS's own tools can't read or modify. Search uses SQLite full-text search (BM25 with
+stemming). For a personal store of hundreds of notes it's accurate, and it needs no extra
+model.
+
+## Voice (M3)
+
+```powershell
+jarvis voice setup      # one-time: downloads and verifies ~130 MB of speech models
+jarvis voice say "Hello, I am Jarvis."   # checks your speakers
+jarvis voice            # hands-free session: say "Hey Jarvis, ..."
+```
+
+- **Full duplex.** The microphone stays on while JARVIS talks. WebRTC echo cancellation
+  removes JARVIS's own voice, so you can talk over it:
+  - Start speaking and it **pauses within ~160 ms**.
+  - Say "okay" or "uh-huh" and it carries on.
+  - Say "stop" and it stops.
+  - Say something new ("actually, make it a spreadsheet") and it drops what it was doing and
+    changes course in the same conversation.
+- **Wake word.** Say "Hey Jarvis". While you're in a conversation (JARVIS is working,
+  speaking, or has just finished) you don't need to repeat it. Set `voice.activation` to
+  `always` in a quiet room to skip the wake word entirely.
+- **Spoken approvals.** Risky actions are asked out loud ("Move old.txt to the Recycle Bin.
+  Should I go ahead?"). Answer yes or no. If you don't answer, the action is declined.
+- **Local speech.** Speech recognition (faster-whisper `base.en`), the voice (Piper), wake
+  word, VAD and echo cancellation all run on your CPU. Audio never leaves the PC or touches
+  the disk; only the transcribed text goes to the language model.
+- **Latency on a 4-core laptop CPU:** about 0.7 s of silence ends your turn. Transcription
+  then takes ~1–1.5 s, sped up by starting it speculatively during the pause, and speech
+  synthesis runs ~10× faster than real time.
+- **Headphones or speakers.** Echo cancellation makes speakers work. If it's unavailable,
+  JARVIS falls back to half-duplex and you should use headphones.
+- **Run with the daemon.** Set `voice.enabled = true` to start voice with `jarvis run`. It
+  shares the one-task-at-a-time lock with other clients, and Ctrl+Alt+J silences it.
+
+| Setting | Default | |
+|---|---|---|
+| `voice.activation` | `wake_word` | or `always` |
+| `voice.stt_model` | `base.en` | `small.en` is more accurate but ~3× slower |
+| `voice.tts_engine` / `tts_voice` | `piper` / `lessac` | voice `amy`, or engine `sapi` (Windows voices, no download) |
+| `voice.barge_in` | `true` | talking over JARVIS interrupts it |
+| `voice.follow_up_s` | `8` | seconds to keep listening after JARVIS speaks |
+| `voice.input_device` / `output_device` | system default | see `jarvis voice devices` |
+
+## Screen control (M2)
+
+JARVIS can see the screen and operate any app:
+
+| Tools | How it works | Models |
+|---|---|---|
+| `launch_app`, `list_windows`, `focus_window` | Starts apps from the Start menu; finds and brings windows forward | All |
+| `inspect_window`, `click_element`, `set_element_text` | Reads an app's real controls through Windows UI Automation and acts on them by id | All |
+| Computer-use toolset: `screenshot`, clicks, drag, `type`, `key`, `scroll`, `zoom`, ... | Looks at screenshots and drives the mouse and keyboard | Claude |
+
+- **Consent per task.** The first screen action in a task asks: *"Let JARVIS see your screen
+  and control the mouse and keyboard for this task?"* Set `desktop.screen_control` to `allow`
+  to stop asking, or `deny` to turn screen control off.
+- **Kill switch.** Press **Ctrl+Alt+J** anywhere to stop JARVIS immediately (`safety.kill_hotkey`).
+- **Protected windows.** JARVIS won't view or operate password managers or Windows Security
+  (`desktop.blocked_windows`). It refuses to type into password fields.
+- **Multiple monitors.** JARVIS works on one monitor (`desktop.monitor`, default: primary).
+  Windows it focuses are moved onto that monitor.
+- Screenshots are sent to the model provider. They are never written to disk.
+
 The default model is Claude Opus 5.5 (`llm.anthropic.model`), with `effort = "high"`.
 Anthropic's server-side refusal fallback is enabled (`llm.anthropic.server_fallback`).
 
@@ -115,9 +200,9 @@ See [SECURITY.md](SECURITY.md) and [docs/architecture.md](docs/architecture.md).
 |---|---|---|
 | M0 | Foundation: config, logging, secrets, API, CLI, CI, installer | ✅ |
 | M1 | Agent core (plan → act → verify), Claude + Ollama providers, file/shell/Office/email/web tools, safety layer | ✅ |
-| M2 | Screen perception (UI Automation + vision + OCR), mouse/keyboard/app and browser control | ⏳ |
-| M3 | Full-duplex voice: AEC, VAD, barge-in, streaming STT/TTS, wake word | ⏳ |
-| M4 | Long-term memory, reusable workflows, task resume | ⏳ |
+| M2 | Screen perception (UI Automation + screenshots), mouse/keyboard/app control, kill switch | ✅ |
+| M3 | Full-duplex voice: echo cancellation, VAD, barge-in, local STT/TTS, wake word, spoken approvals | ✅ |
+| M4 | Long-term memory, reusable workflows, task history and resume | ✅ |
 | M5 | Tray/overlay UI, first-run wizard, V1 release | ⏳ |
 
 ## Development

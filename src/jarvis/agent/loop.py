@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
-from jarvis.agent.events import EventSink, null_sink
+from jarvis.agent.events import Event, EventSink, null_sink
 from jarvis.agent.prompts import build_system_prompt, goal_message
 from jarvis.core.config import AgentConfig
 from jarvis.llm.base import (
@@ -26,11 +28,14 @@ from jarvis.llm.base import (
     TurnResult,
     Usage,
 )
+from jarvis.memory.store import Store
 from jarvis.tools.base import ToolContext, ToolRegistry
 
 log = logging.getLogger(__name__)
 
 LLM_RETRIES = 2
+COMPUTER = "computer"
+HALT_TEXT = "Not executed: an earlier computer action in this turn failed."
 
 
 class TaskStatus(StrEnum):
@@ -71,26 +76,69 @@ class Agent:
         self._ctx = ctx
         self._cfg = cfg
         self._emit = emit
-        ctx.emit = emit
+        self._emit = self._journaling(emit)
+        ctx.emit = self._emit
+        screen = ctx.desktop is not None
         self._conv: Conversation = provider.new_conversation(
-            build_system_prompt(ctx.guard.allowed), registry.specs()
+            build_system_prompt(
+                ctx.guard.allowed,
+                screen=screen,
+                pixel_control=screen and provider.supports_computer_use,
+                kill_hotkey=ctx.settings.safety.kill_hotkey,
+                memory=ctx.store is not None,
+            ),
+            registry.specs(),
+            computer_use=screen and provider.supports_computer_use,
         )
         self._lock = asyncio.Lock()
+
+    @property
+    def store(self) -> Store | None:
+        return self._ctx.store
+
+    def close(self) -> None:
+        """Release OS resources (UI Automation thread, held keys)."""
+        if self._ctx.desktop is not None:
+            self._ctx.desktop.close()
 
     @property
     def busy(self) -> bool:
         return self._lock.locked()
 
-    async def run(self, goal: str) -> TaskResult:
+    def _journaling(self, emit: EventSink) -> EventSink:
+        """Record plan updates in the task journal (used to resume interrupted tasks)."""
+
+        async def sink(event: Event) -> None:
+            if event.get("type") == "plan.updated":
+                self._journal("task_plan", self._ctx.task_id, event.get("steps", []))
+            await emit(event)
+
+        return sink
+
+    def _journal(self, method: str, *args: Any) -> None:
+        store = self._ctx.store
+        if store is None:
+            return
+        try:
+            getattr(store, method)(*args)
+        except sqlite3.Error:
+            # The journal is best-effort: a locked or full disk must not break the task.
+            log.warning("task journal %s failed", method, exc_info=True)
+
+    async def run(
+        self, goal: str, voice: bool = False, resumed_from: str | None = None
+    ) -> TaskResult:
         async with self._lock:
             task_id = uuid.uuid4().hex[:12]
+            self._ctx.task_id = task_id
             result = TaskResult(task_id, TaskStatus.FAILED, "")
             self._ctx.audit.record("task.start", task_id=task_id, goal=goal)
+            self._journal("task_started", task_id, goal, resumed_from)
             await self._emit({"type": "task.started", "task_id": task_id, "goal": goal})
             pending = _Inflight()
             try:
                 async with asyncio.timeout(self._cfg.task_timeout_s):
-                    await self._loop(goal, result, pending)
+                    await self._loop(goal, result, pending, voice)
             except TimeoutError:
                 result.status = TaskStatus.LIMIT
                 result.summary = f"Stopped: the task exceeded {self._cfg.task_timeout_s:.0f}s."
@@ -109,6 +157,12 @@ class Agent:
             return result
 
     async def _finish(self, result: TaskResult) -> None:
+        self._journal(
+            "task_finished", result.task_id, result.status.value, result.summary, result.tool_calls
+        )
+        if self._ctx.desktop is not None:
+            # Screen consent is per task; also let go of any keys/buttons still held.
+            self._ctx.desktop.end_task(result.task_id)
         self._ctx.audit.record(
             "task.finish",
             task_id=result.task_id,
@@ -141,7 +195,7 @@ class Agent:
             return
         done = {o.call_id for o in pending.outcomes}
         results = list(pending.outcomes) + [
-            ToolOutcome(c.id, c.name, reason, is_error=True)
+            ToolOutcome(c.id, c.name, reason, is_error=True, toolset=c.toolset)
             for c in pending.calls
             if c.id not in done
         ]
@@ -160,8 +214,18 @@ class Agent:
                 await asyncio.sleep(2**attempt)
         raise AssertionError("unreachable")
 
-    async def _loop(self, goal: str, result: TaskResult, pending: _Inflight) -> None:
-        self._conv.add_user(goal_message(goal))
+    async def _loop(
+        self, goal: str, result: TaskResult, pending: _Inflight, voice: bool = False
+    ) -> None:
+        memories = []
+        if self._ctx.store is not None and self._ctx.settings.memory.context_items:
+            try:
+                memories = self._ctx.store.context_for(
+                    goal, self._ctx.settings.memory.context_items
+                )
+            except sqlite3.Error:
+                log.warning("could not load memories", exc_info=True)
+        self._conv.add_user(goal_message(goal, voice=voice, memories=memories))
         for _ in range(self._cfg.max_turns):
             turn = await self._step()
             result.usage.add(turn.usage)
@@ -191,8 +255,17 @@ class Agent:
                         "Retry with smaller steps (e.g. write large content in parts).",
                     )
                     continue
+                halted = False
                 for call in turn.tool_calls:
-                    pending.outcomes.append(await self._run_tool(call, result))
+                    if halted and call.toolset == COMPUTER:
+                        # Batch rule: after a failed computer action, later ones are skipped.
+                        pending.outcomes.append(
+                            ToolOutcome(call.id, call.name, HALT_TEXT, True, toolset=COMPUTER)
+                        )
+                        continue
+                    outcome = await self._run_tool(call, result)
+                    halted = halted or (outcome.is_error and call.toolset == COMPUTER)
+                    pending.outcomes.append(outcome)
                 self._conv.add_tool_results(pending.outcomes)
                 pending.calls, pending.outcomes = [], []
                 continue

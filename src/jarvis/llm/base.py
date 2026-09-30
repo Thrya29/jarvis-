@@ -32,6 +32,7 @@ class ToolCall:
     id: str
     name: str
     input: dict[str, Any]
+    toolset: str | None = None  # e.g. "computer" for Claude's computer-use toolset
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,8 @@ class ToolOutcome:
     name: str
     content: str
     is_error: bool = False
+    images: tuple[bytes, ...] = ()  # PNG screenshots
+    toolset: str | None = None
 
 
 @dataclass
@@ -83,8 +86,12 @@ class Conversation(Protocol):
 
 class LLMProvider(Protocol):
     name: str
+    # Whether the model can drive the desktop from screenshots (Claude's computer toolset).
+    supports_computer_use: bool
 
-    def new_conversation(self, system: str, tools: list[ToolSpec]) -> Conversation: ...
+    def new_conversation(
+        self, system: str, tools: list[ToolSpec], computer_use: bool = False
+    ) -> Conversation: ...
 
     async def check(self) -> tuple[bool, str]:
         """Cheap reachability/credential check for `jarvis doctor`."""
