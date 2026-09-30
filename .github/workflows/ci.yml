@@ -58,7 +58,7 @@ jobs:
           "import docx, openpyxl, pypdf, mss, PIL, uiautomation, faster_whisper, ctranslate2, onnxruntime, piper, soxr, livekit.rtc`nfrom jarvis.voice.vad import SileroVAD; SileroVAD()`ndocx.Document().save(r'$doc')`nprint('ok')" | Set-Content -Encoding utf8 $script
           ./dist/jarvis/jarvis.exe _pyexec $script
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path $doc)) { exit 1 }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: jarvis-windows-x64
           path: dist/jarvis
