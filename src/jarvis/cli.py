@@ -113,7 +113,23 @@ def run_checks(paths: AppPaths) -> list[Check]:
     ok, detail = _ollama_reachable(settings.llm.ollama.host)
     checks.append(Check("ollama", ok, detail, required=provider is LLMProvider.OLLAMA))
 
+    try:
+        from jarvis.voice.runtime import model_store, required_files
+
+        absent = model_store(paths).missing(required_files(settings))
+        checks.append(
+            Check(
+                "voice models",
+                not absent,
+                "ready" if not absent else "not downloaded - run `jarvis voice setup`",
+                required=settings.voice.enabled,
+            )
+        )
+    except ImportError as exc:
+        checks.append(Check("voice models", False, f"voice support missing: {exc}", False))
+
     missing = [str(r) for r in settings.safety.allowed_roots if not r.is_dir()]
+    present = len(settings.safety.allowed_roots) - len(missing)
     checks.append(
         Check(
             "allowed roots",
@@ -121,6 +137,8 @@ def run_checks(paths: AppPaths) -> list[Check]:
             f"missing: {', '.join(missing)}"
             if missing
             else f"{len(settings.safety.allowed_roots)} folders",
+            # A missing folder is only fatal if none of them exist.
+            required=present == 0,
         )
     )
 
@@ -283,6 +301,75 @@ def cmd_pyexec(args: argparse.Namespace, paths: AppPaths) -> int:
     return 0
 
 
+def cmd_voice(args: argparse.Namespace, paths: AppPaths) -> int:
+    settings = _load_or_exit()
+    configure_logging(settings.logging, paths.log_dir, console=False)
+    action = args.action or "run"
+    if action == "setup":
+        from jarvis.voice.models import ModelError
+        from jarvis.voice.runtime import setup_models
+
+        last: dict[str, int] = {}
+
+        def progress(name: str, done: int, total: int) -> None:
+            pct = done * 100 // max(1, total)
+            if last.get(name) != pct and pct % 5 == 0:
+                last[name] = pct
+                print(f"\r  {name}: {pct}%", end="", flush=True)
+                if pct == 100:
+                    print()
+
+        print("Downloading and verifying voice models (about 150 MB)...")
+        try:
+            setup_models(settings, paths, progress)
+        except ModelError as exc:
+            print(f"\n{exc}", file=sys.stderr)
+            return 2
+        print("Voice models ready.")
+        return 0
+    if action == "devices":
+        import sounddevice as sd
+
+        print(sd.query_devices())
+        return 0
+    if action == "say":
+        return asyncio.run(_say(" ".join(args.text) or "Hello, I am Jarvis.", settings, paths))
+    from jarvis.voice.runtime import run_voice
+
+    try:
+        return asyncio.run(run_voice(settings, paths))
+    except KeyboardInterrupt:
+        return 130
+
+
+async def _say(text: str, settings: Settings, paths: AppPaths) -> int:
+    """Speak a sentence through the configured voice (checks speakers and TTS)."""
+    import sounddevice as sd
+
+    from jarvis.core.config import TTSEngine
+    from jarvis.voice.audio import OUT_SR
+    from jarvis.voice.models import piper_files
+    from jarvis.voice.runtime import model_store
+    from jarvis.voice.speech import PiperTTS, SapiTTS
+
+    v = settings.voice
+    store = model_store(paths)
+    tts: PiperTTS | SapiTTS
+    if v.tts_engine is TTSEngine.PIPER:
+        model = store.path(piper_files(v.tts_voice)[0])
+        if not model.exists():
+            print("Piper voice missing - run `jarvis voice setup`", file=sys.stderr)
+            return 2
+        tts = PiperTTS(model, v.tts_speed)
+    else:
+        tts = SapiTTS(v.tts_speed)
+    audio = await tts.synthesize(text)
+    sd.play(audio, OUT_SR, device=v.output_device)
+    sd.wait()
+    tts.close()
+    return 0
+
+
 def cmd_version(args: argparse.Namespace, paths: AppPaths) -> int:
     print(f"jarvis {__version__}")
     return 0
@@ -301,6 +388,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_do.add_argument("--no", action="store_true", help="decline every approval prompt")
     p_do.set_defaults(func=cmd_do)
     sub.add_parser("chat", help="interactive session in the terminal").set_defaults(func=cmd_chat)
+
+    p_voice = sub.add_parser("voice", help="hands-free voice session (and voice setup)")
+    p_voice.add_argument(
+        "action", nargs="?", choices=["run", "setup", "devices", "say"], default="run"
+    )
+    p_voice.add_argument("text", nargs="*", help="text for `voice say`")
+    p_voice.set_defaults(func=cmd_voice)
 
     p_exec = sub.add_parser("_pyexec")  # internal
     p_exec.add_argument("script")

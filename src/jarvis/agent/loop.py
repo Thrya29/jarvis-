@@ -96,7 +96,7 @@ class Agent:
     def busy(self) -> bool:
         return self._lock.locked()
 
-    async def run(self, goal: str) -> TaskResult:
+    async def run(self, goal: str, voice: bool = False) -> TaskResult:
         async with self._lock:
             task_id = uuid.uuid4().hex[:12]
             self._ctx.task_id = task_id
@@ -106,7 +106,7 @@ class Agent:
             pending = _Inflight()
             try:
                 async with asyncio.timeout(self._cfg.task_timeout_s):
-                    await self._loop(goal, result, pending)
+                    await self._loop(goal, result, pending, voice)
             except TimeoutError:
                 result.status = TaskStatus.LIMIT
                 result.summary = f"Stopped: the task exceeded {self._cfg.task_timeout_s:.0f}s."
@@ -179,8 +179,10 @@ class Agent:
                 await asyncio.sleep(2**attempt)
         raise AssertionError("unreachable")
 
-    async def _loop(self, goal: str, result: TaskResult, pending: _Inflight) -> None:
-        self._conv.add_user(goal_message(goal))
+    async def _loop(
+        self, goal: str, result: TaskResult, pending: _Inflight, voice: bool = False
+    ) -> None:
+        self._conv.add_user(goal_message(goal, voice=voice))
         for _ in range(self._cfg.max_turns):
             turn = await self._step()
             result.usage.add(turn.usage)

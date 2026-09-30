@@ -7,10 +7,11 @@ and every non-health route requires the per-install bearer token.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hmac
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable, Coroutine
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
@@ -30,6 +31,7 @@ def create_app(
     token: str,
     agent_factory: AgentFactory | None = None,
     kill_switch: bool = False,
+    services: list[Callable[[TaskBoard], Coroutine[Any, Any, None]]] | None = None,
 ) -> FastAPI:
     board = TaskBoard()  # one task drives the desktop at a time
 
@@ -51,9 +53,15 @@ def create_app(
             )
             if switch.start():
                 log.info("kill switch armed: %s", settings.safety.kill_hotkey)
+        running: list[asyncio.Task[None]] = [asyncio.create_task(s(board)) for s in services or []]
         try:
             yield
         finally:
+            for t in running:
+                t.cancel()
+            for t in running:
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await t
             if switch is not None:
                 switch.stop()
 

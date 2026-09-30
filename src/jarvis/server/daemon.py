@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from typing import Any
 
 import uvicorn
 
@@ -36,12 +38,32 @@ def _agent_factory(settings: Settings, paths: AppPaths) -> AgentFactory | None:
     return factory
 
 
+def _voice_services(settings: Settings, paths: AppPaths) -> list[Any]:
+    if not settings.voice.enabled:
+        return []
+
+    async def voice(board: Any) -> None:
+        from jarvis.voice.runtime import voice_session
+
+        vlog = logging.getLogger("jarvis.voice")
+        try:
+            provider = create_provider(settings.llm)
+            await voice_session(settings, paths, provider, vlog.info, board)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            vlog.exception("voice assistant stopped")
+
+    return [voice]
+
+
 def run_daemon(settings: Settings, paths: AppPaths) -> None:
     with InstanceLock(paths.lock_file):
         token = load_or_create_token(paths.token_file)
         audit = AuditLog(paths.audit_log)
         factory = _agent_factory(settings, paths)
-        app = create_app(settings, token, factory, kill_switch=True)
+        services = _voice_services(settings, paths) if factory is not None else []
+        app = create_app(settings, token, factory, kill_switch=True, services=services)
         audit.record("daemon.start", version=__version__)
         log.info(
             "JARVIS %s listening on http://%s:%d",

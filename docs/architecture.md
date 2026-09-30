@@ -107,6 +107,29 @@ Failures come back to the model as error results; they never crash the task.
 - Every model gets the UI Automation tools. Text-only local models can operate standard apps
   through them; they don't get pixel control.
 
+## Voice pipeline
+
+```
+mic 16 kHz ─► WebRTC APM (AEC + NS + HPF) ─┬─► openWakeWord ("hey jarvis", 80 ms steps)
+   ▲ speaker reference (22.05→16 kHz)       └─► Silero VAD (32 ms) ─► Segmenter
+   │                                              speech_start / pause / resume / utterance
+Player ◄── Piper TTS (sentence by sentence)          │
+   ▲                                                  ▼
+   └────────────── VoiceAssistant (asyncio) ◄── faster-whisper base.en (int8, CPU)
+                          │  ▲
+                 goals ───┘  └── agent events (spoken), approvals (asked aloud)
+```
+
+- `voice/audio.py`: PortAudio streams, the playback buffer (instant pause, resume or clear),
+  the AEC reference path and the front-end thread.
+- `voice/vad.py`: the Silero VAD wrapper and the segmenter state machine. It fires
+  `speech_start` after 160 ms of speech, a speculative `pause` after 250 ms of silence,
+  `resume` if speech continues, and `utterance` after 700 ms of silence.
+- `voice/wake.py`: openWakeWord's mel → embedding → classifier pipeline on onnxruntime,
+  with scores matching the reference package.
+- `voice/engine.py`: the conversation state machine (see its module docstring).
+- `voice/models.py`: pinned, hash-verified model downloads into the cache directory.
+
 ## Agent loop invariants
 
 - The conversation is append-only. Claude's assistant content, including thinking blocks, is

@@ -10,7 +10,7 @@ from __future__ import annotations
 import ipaddress
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import platformdirs
 import tomli_w
@@ -85,20 +85,58 @@ class ServerConfig(BaseModel):
         return v
 
 
+class Activation(StrEnum):
+    WAKE_WORD = "wake_word"  # say "Hey Jarvis" to start a conversation
+    ALWAYS = "always"  # every utterance is for JARVIS (use in a quiet room)
+
+
+class TTSEngine(StrEnum):
+    PIPER = "piper"  # natural neural voice, runs locally
+    SAPI = "sapi"  # Windows built-in voices, no download
+
+
 class VoiceConfig(BaseModel):
+    # Start the voice assistant with the daemon (`jarvis run`); `jarvis voice` always does.
     enabled: bool = False
-    wake_word: str = "hey_jarvis"
-    stt_model: str = "base.en"
-    tts_voice: str = "af_heart"
+    activation: Activation = Activation.WAKE_WORD
+    wake_threshold: float = Field(default=0.5, gt=0.05, lt=1.0)
+    stt_model: Literal["base.en", "small.en"] = "base.en"
+    stt_threads: int = Field(default=0, ge=0, le=32, description="0 = automatic")
+    tts_engine: TTSEngine = TTSEngine.PIPER
+    tts_voice: str = "lessac"
+    tts_speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    echo_cancellation: bool = True
+    # Talking while JARVIS speaks pauses it at once; real speech then replaces its turn.
+    barge_in: bool = True
+    # After JARVIS finishes speaking, keep listening this long without the wake word.
+    follow_up_s: float = Field(default=8.0, ge=0, le=120)
+    vad_threshold: float = Field(default=0.5, gt=0.05, lt=1.0)
+    end_silence_ms: int = Field(default=700, ge=200, le=3000)
+    approval_timeout_s: float = Field(default=30.0, ge=5, le=300)
+    input_device: int | str | None = None
+    output_device: int | str | None = None
+
+    @field_validator("tts_voice")
+    @classmethod
+    def _known_voice(cls, v: str) -> str:
+        voices = {"lessac", "amy"}
+        if v == "af_heart":  # default written by 0.1 configs
+            return "lessac"
+        if v not in voices:
+            raise ValueError(f"tts_voice must be one of {sorted(voices)}")
+        return v
 
 
 def _default_roots() -> list[Path]:
-    # Known-folder lookups follow OneDrive redirection of Desktop/Documents.
-    return [
+    # Known-folder lookups follow OneDrive redirection of Desktop/Documents. Only
+    # folders that exist are used (e.g. some PCs have no Downloads folder).
+    candidates = [
         Path(platformdirs.user_documents_dir()),
         Path(platformdirs.user_desktop_dir()),
         Path(platformdirs.user_downloads_dir()),
     ]
+    existing = [p for p in candidates if p.is_dir()]
+    return existing or [Path.home()]
 
 
 class SafetyConfig(BaseModel):
@@ -200,6 +238,7 @@ def write_default_config(path: Path | None = None, *, overwrite: bool = False) -
     if target.exists() and not overwrite:
         return target
     target.parent.mkdir(parents=True, exist_ok=True)
-    data: dict[str, Any] = Settings.model_construct().model_dump(mode="json")
+    # TOML has no null: unset optional values (e.g. audio devices) are simply omitted.
+    data: dict[str, Any] = Settings.model_construct().model_dump(mode="json", exclude_none=True)
     target.write_text(tomli_w.dumps(data), encoding="utf-8")
     return target

@@ -84,20 +84,30 @@ class TaskBoard:
 
     def __init__(self) -> None:
         self.lock = asyncio.Lock()
-        self.tasks: set[asyncio.Task[None]] = set()
+        self.tasks: set[asyncio.Task[Any]] = set()
+        self._kill_hooks: list[Callable[[], None]] = []
 
     @property
     def busy(self) -> bool:
         return self.lock.locked()
 
-    def track(self, task: asyncio.Task[None]) -> None:
+    def track(self, task: asyncio.Task[Any]) -> None:
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
+
+    def on_kill(self, hook: Callable[[], None]) -> None:
+        """Extra things to silence on the kill switch (e.g. speech playback)."""
+        self._kill_hooks.append(hook)
 
     def cancel_all(self) -> int:
         live = [t for t in self.tasks if not t.done()]
         for t in live:
             t.cancel()
+        for hook in self._kill_hooks:
+            try:
+                hook()
+            except Exception:
+                log.exception("kill hook failed")
         return len(live)
 
 
