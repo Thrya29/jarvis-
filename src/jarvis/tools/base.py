@@ -64,6 +64,8 @@ class ToolContext:
     desktop: DesktopSession | None = None
     task_id: str = ""
     store: Store | None = None  # long-term memory, workflows, task journal
+    documents: Any = None  # knowledge.index.DocIndex when 'Ask my documents' is on
+    connections: Any = None  # connect.accounts.ConnectionManager (email, calendar, files)
 
 
 class Tool[A: ToolArgs](ABC):
@@ -89,6 +91,14 @@ class Tool[A: ToolArgs](ABC):
 
     def details(self, args: A) -> str:
         return ""
+
+    async def preview(self, args: A, ctx: ToolContext) -> tuple[str, str] | None:
+        """Look up what the action will really do, for the approval prompt.
+
+        Returns (summary, details) from authoritative data (e.g. a draft's actual
+        recipients on the server) rather than the model's description of it.
+        """
+        return None
 
     @abstractmethod
     async def run(self, args: A, ctx: ToolContext) -> ToolResult: ...
@@ -161,8 +171,15 @@ class ToolRegistry:
 
         summary = tool.summarize(args)
         if needs_approval(risk, ctx.settings.safety) or tool.confirm(args, ctx):
+            details = tool.details(args)
+            try:
+                live = await asyncio.wait_for(tool.preview(args, ctx), timeout=60)
+            except (ToolError, TimeoutError) as exc:
+                return ToolOutcome(call.id, call.name, f"Couldn't prepare: {exc}", is_error=True)
+            if live is not None:
+                summary, details = live
             decision = await ctx.approver.request(
-                ApprovalRequest(tool.name, summary, risk, tool.details(args))
+                ApprovalRequest(tool.name, summary, risk, details)
             )
             ctx.audit.record(
                 "tool.approval",

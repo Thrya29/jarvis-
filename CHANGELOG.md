@@ -1,5 +1,30 @@
 # Changelog
 
+## 2.1.0 — 2026-10-01
+
+Your accounts, the web and your documents.
+
+- **Connections**: each user connects their own accounts and ticks what JARVIS may do.
+  - **Microsoft 365 / Outlook** (Microsoft Graph) and **Google** (Gmail, Calendar,
+    Drive): sign in on the provider's page (OAuth 2.0 with PKCE and a one-time local
+    redirect). Only the scopes for the ticked options are requested.
+  - **IMAP/SMTP** for other providers, using an app password.
+  - Tokens and passwords are DPAPI-encrypted per Windows user. Disconnecting deletes them
+    (and revokes Google's grant).
+- **New tools**: `mail_search`, `mail_read`, `mail_draft`, `mail_send`,
+  `calendar_events`, `calendar_create`, `files_search`, `file_download`.
+  - Sending always asks first and shows the draft's real recipients from the server.
+  - Creating an event with attendees asks first; downloads never overwrite and stay in
+    allowed folders.
+  - Mail, events and file listings are fenced as untrusted content.
+- **Web research with sources**: Claude's server-side web search and fetch. Sources are
+  shown as links under the answer, and search fees are counted in the daily budget.
+- **Ask my documents**: a local hybrid (meaning + keyword) index of chosen folders,
+  using BGE-small (int8 ONNX, SHA-256 pinned). Incremental re-indexing runs every 30
+  minutes; the status and a "Re-index now" button are in Connections.
+- Approval prompts can now show live details fetched before asking (`Tool.preview`).
+- Setup guide for app registration: `docs/connections-setup.md`.
+
 ## 2.0.0 — 2026-09-30
 
 Personalisation and a faster, more natural conversation.

@@ -115,7 +115,11 @@ class OllamaProvider:
         )
 
     def new_conversation(
-        self, system: str, tools: list[ToolSpec], computer_use: bool = False
+        self,
+        system: str,
+        tools: list[ToolSpec],
+        computer_use: bool = False,
+        web_research: bool = False,  # no server-side search for local models
     ) -> OllamaConversation:
         return OllamaConversation(self._client, self._cfg, system, tools)
 

@@ -39,6 +39,19 @@ COMPUTER = "computer"
 HALT_TEXT = "Not executed: an earlier computer action in this turn failed."
 
 
+def _account_lines(ctx: ToolContext) -> list[str]:
+    """One line per connected account for the system prompt: address and allowed actions."""
+    from jarvis.connect.accounts import CAPABILITY_LABELS
+
+    if ctx.connections is None:
+        return []
+    return [
+        f"{a.email} ({a.provider.value}): "
+        + ", ".join(CAPABILITY_LABELS[c].split(" (")[0].lower() for c in a.capabilities)
+        for a in ctx.connections.accounts()
+    ]
+
+
 class TaskStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
@@ -94,9 +107,12 @@ class Agent:
                 memory=ctx.store is not None,
                 profile=ctx.settings.profile,
                 persona=ctx.settings.persona,
+                web=ctx.settings.features.web_research and provider.name == "anthropic",
+                accounts=_account_lines(ctx) if "mail_search" in registry.names() else None,
             ),
             registry.specs(),
             computer_use=screen and provider.supports_computer_use,
+            web_research=ctx.settings.features.web_research,
         )
         self._lock = asyncio.Lock()
 
@@ -322,6 +338,7 @@ class Agent:
                         "task_id": result.task_id,
                         "text": turn.text,
                         "streamed": streamed,
+                        "sources": [{"url": s.url, "title": s.title} for s in turn.sources],
                     }
                 )
 

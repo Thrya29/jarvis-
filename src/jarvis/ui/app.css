@@ -229,3 +229,32 @@ legend { font-weight: 600; margin-bottom: 4px; }
 .wizard-nav .spacer { flex: 1; }
 .msg-progress { align-self: flex-start; color: var(--muted); font-style: italic; font-size: 13px; padding: 2px 14px; }
 @media (max-width: 720px) { .voice-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---------------------------------------------------------------- connections (v2.1) */
+.dialog-wide { width: min(780px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; }
+.conn-head { display: flex; align-items: center; justify-content: space-between; }
+.conn-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 12px 0; }
+.conn-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--panel-2); }
+.conn-card h3, .conn-docs h3 { margin: 0 0 4px; font-size: 15px; }
+.conn-card .hint { margin: 0 0 8px; }
+.caps { display: flex; flex-direction: column; gap: 0; margin: 4px 0 10px; }
+.caps .choice { margin: 2px 0; font-size: 13px; }
+.conn-accounts { display: flex; flex-direction: column; gap: 6px; }
+.conn-account {
+  display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 10px;
+  padding: 8px 12px; background: var(--panel-2);
+}
+.conn-account .who { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.conn-account .what { display: block; color: var(--muted); font-size: 12px; }
+.conn-wait { display: flex; align-items: center; gap: 10px; color: var(--accent); margin: 8px 0; }
+.conn-more { border-top: 1px solid var(--line); padding: 8px 0; }
+.conn-more summary { cursor: pointer; font-weight: 600; }
+.conn-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.conn-docs { border-top: 1px solid var(--line); padding-top: 10px; }
+.sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; font-size: 12px; }
+.sources a {
+  color: var(--accent); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px;
+  text-decoration: none; max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sources a:hover { border-color: var(--accent); }
+@media (max-width: 720px) { .conn-grid, .conn-form { grid-template-columns: minmax(0, 1fr); } }

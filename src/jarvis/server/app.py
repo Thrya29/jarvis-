@@ -33,9 +33,12 @@ from fastapi import (
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 
 from jarvis import __version__
 from jarvis.agent.events import Event
+from jarvis.connect.accounts import AccountError, Capability, Provider
+from jarvis.connect.imap import ImapSettings
 from jarvis.core.config import LLMProvider as ProviderName
 from jarvis.core.config import Settings
 from jarvis.llm.base import LLMError
@@ -44,6 +47,18 @@ from jarvis.server.session import AgentFactory, ClientSession, TaskBoard
 
 log = logging.getLogger(__name__)
 WS_AUTH_TIMEOUT_S = 5.0
+
+
+class ImapRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=254, pattern=r"^[^@\s]+@[^@\s]+$")
+    username: str = Field(default="", max_length=254)
+    password: str = Field(min_length=1, max_length=512)
+    imap_host: str = Field(min_length=1, max_length=253, pattern=r"^[A-Za-z0-9.-]+$")
+    imap_port: int = Field(default=993, ge=1, le=65535)
+    smtp_host: str = Field(default="", max_length=253, pattern=r"^[A-Za-z0-9.-]*$")
+    smtp_port: int = Field(default=465, ge=1, le=65535)
+    capabilities: list[Capability]
+
 
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
@@ -267,6 +282,67 @@ def create_app(
         h = need_hub()
         await h.set_voice_enabled(enabled)
         return h.setup_status()
+
+    # ------------------------------------------------------------------ connections
+
+    @app.get("/v1/connections", dependencies=auth)
+    async def get_connections() -> dict[str, Any]:
+        return need_hub().connections_status()
+
+    @app.post("/v1/connections/imap", dependencies=auth)
+    async def connect_imap(req: ImapRequest) -> dict[str, Any]:
+        h = need_hub()
+        settings = ImapSettings(
+            req.email.strip(),
+            req.username.strip() or req.email.strip(),
+            req.imap_host,
+            req.imap_port,
+            req.smtp_host,
+            req.smtp_port,
+        )
+        try:
+            await h.connect_imap(settings, req.password, req.capabilities)
+        except AccountError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return h.connections_status()
+
+    @app.post("/v1/connections/cancel", dependencies=auth)
+    async def cancel_sign_in() -> dict[str, bool]:
+        return {"cancelled": await need_hub().cancel_sign_in()}
+
+    @app.post("/v1/connections/{provider}/connect", dependencies=auth, status_code=202)
+    async def connect_account(
+        provider: Provider, capabilities: Annotated[list[Capability], Body(embed=True)]
+    ) -> dict[str, Any]:
+        if provider is Provider.IMAP:
+            raise HTTPException(400, "use /v1/connections/imap for IMAP accounts")
+        h = need_hub()
+        try:
+            await h.start_sign_in(provider, capabilities)
+        except AccountError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return h.connections_status()
+
+    @app.delete("/v1/connections/{account_id}", dependencies=auth)
+    async def disconnect_account(account_id: str) -> dict[str, Any]:
+        h = need_hub()
+        if not await h.disconnect(account_id):
+            raise HTTPException(404, "no such account")
+        return h.connections_status()
+
+    # ------------------------------------------------------------------ documents
+
+    @app.get("/v1/documents", dependencies=auth)
+    async def documents_status() -> dict[str, Any]:
+        return need_hub().documents_status()
+
+    @app.post("/v1/documents/sync", dependencies=auth, status_code=202)
+    async def documents_sync() -> dict[str, str]:
+        h = need_hub()
+        if not h.settings.features.documents.enabled:
+            raise HTTPException(400, "'Ask my documents' is turned off")
+        board.track(asyncio.create_task(h.index_documents()))
+        return {"status": "started"}
 
     # ------------------------------------------------------------------ websocket
 

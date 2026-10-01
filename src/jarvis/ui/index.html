@@ -19,6 +19,7 @@
     </div>
     <div class="actions">
       <button id="stopBtn" class="btn btn-danger" type="button" hidden title="Stop everything (also Ctrl+Alt+J)">Stop</button>
+      <button id="connBtn" class="btn btn-ghost" type="button" title="Email, calendar, files and documents">Connections</button>
       <button id="setupBtn" class="btn btn-ghost" type="button">Settings</button>
     </div>
   </header>
@@ -139,14 +140,14 @@
         <h2>Features</h2>
         <p class="hint">Tick what you want. Features marked with a version arrive in that update — your choices are saved now and switch on automatically when it's installed.</p>
         <div class="features">
-          <label class="choice"><input id="fWeb" type="checkbox"> <span><strong>Web search &amp; research</strong> with sources <em class="soon">v2.1</em></span></label>
+          <label class="choice"><input id="fWeb" type="checkbox"> <span><strong>Web search &amp; research</strong> with sources (about $0.01 per search)</span></label>
 
-          <label class="choice"><input id="fDocs" type="checkbox" data-toggles="docsOpts"> <span><strong>Ask my documents</strong> — search and answer from your files <em class="soon">v2.1</em></span></label>
+          <label class="choice"><input id="fDocs" type="checkbox" data-toggles="docsOpts"> <span><strong>Ask my documents</strong> — search and answer from your files (indexed on this PC; ~35 MB model download)</span></label>
           <div id="docsOpts" class="sub" hidden>
             <label class="field">Folders to index (one per line)<textarea id="fDocsFolders" rows="3" spellcheck="false"></textarea></label>
           </div>
 
-          <label class="choice"><input id="fEmail" type="checkbox" data-toggles="emailOpts"> <span><strong>Email &amp; calendar</strong> <em class="soon">v2.1</em></span></label>
+          <label class="choice"><input id="fEmail" type="checkbox" data-toggles="emailOpts"> <span><strong>Email, calendar &amp; cloud files</strong> — connect accounts after setup with the <em>Connections</em> button</span></label>
           <div id="emailOpts" class="sub" hidden>
             <label class="choice"><input type="radio" name="emailProvider" value="microsoft"> <span>Microsoft 365 / Outlook</span></label>
             <label class="choice"><input type="radio" name="emailProvider" value="google"> <span>Google (Gmail / Calendar)</span></label>
@@ -247,6 +248,72 @@
         <button value="run" class="btn btn-primary" type="submit">Run</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="connDlg" class="dialog dialog-wide" aria-labelledby="connTitle">
+    <div class="conn-head">
+      <h2 id="connTitle">Connections</h2>
+      <button id="connClose" class="btn btn-ghost" type="button">Close</button>
+    </div>
+    <p class="hint">Connect only what you want, and tick only what JARVIS may do. You sign in on Microsoft's or Google's own page, so JARVIS never sees your password. Access tokens stay encrypted on this PC. Sending email and inviting people always asks you first.</p>
+
+    <div id="connAccounts" class="conn-accounts"></div>
+    <div id="connWait" class="conn-wait" hidden>
+      <span>Finish signing in in your browser…</span>
+      <button id="connCancel" class="btn btn-small" type="button">Cancel</button>
+    </div>
+
+    <div class="conn-grid">
+      <section class="conn-card" data-provider="microsoft">
+        <h3>Microsoft 365 / Outlook</h3>
+        <p class="hint">Outlook mail, calendar and OneDrive / SharePoint files. Work or personal account.</p>
+        <div class="caps"></div>
+        <p class="hint conn-note" hidden></p>
+        <button class="btn btn-primary conn-go" type="button">Sign in with Microsoft</button>
+      </section>
+      <section class="conn-card" data-provider="google">
+        <h3>Google</h3>
+        <p class="hint">Gmail, Google Calendar and Google Drive.</p>
+        <div class="caps"></div>
+        <p class="hint conn-note" hidden></p>
+        <button class="btn btn-primary conn-go" type="button">Sign in with Google</button>
+      </section>
+    </div>
+
+    <details class="conn-more">
+      <summary>Other email (Zoho, company mail server…) via IMAP</summary>
+      <p class="hint">Use an <em>app password</em> from your email provider, not your normal password.</p>
+      <div class="conn-form">
+        <label class="field">Email address <input id="imEmail" type="email" autocomplete="off"></label>
+        <label class="field">Username (if different) <input id="imUser" type="text" autocomplete="off"></label>
+        <label class="field">App password <input id="imPass" type="password" autocomplete="new-password"></label>
+        <label class="field">Incoming (IMAP) server <input id="imHost" type="text" placeholder="imap.example.com"></label>
+        <label class="field">IMAP port <input id="imPort" type="number" value="993" min="1" max="65535"></label>
+        <label class="field">Outgoing (SMTP) server <input id="smHost" type="text" placeholder="smtp.example.com (optional)"></label>
+        <label class="field">SMTP port <input id="smPort" type="number" value="465" min="1" max="65535"></label>
+      </div>
+      <div class="caps" id="imapCaps"></div>
+      <button id="imapGo" class="btn btn-primary" type="button">Connect</button>
+    </details>
+
+    <details class="conn-more">
+      <summary>Advanced: app registration</summary>
+      <p class="hint">“Sign in with Microsoft/Google” needs this copy of JARVIS to be registered with them once (free). Your IT team or whoever set up JARVIS fills these in — see <code>docs/connections-setup.md</code>. These are app IDs, not passwords.</p>
+      <div class="conn-form">
+        <label class="field">Microsoft application (client) ID <input id="appMsId" type="text" spellcheck="false"></label>
+        <label class="field">Microsoft tenant <input id="appMsTenant" type="text" spellcheck="false" placeholder="common"></label>
+        <label class="field">Google client ID <input id="appGId" type="text" spellcheck="false"></label>
+        <label class="field">Google client secret <input id="appGSecret" type="text" spellcheck="false"></label>
+      </div>
+      <button id="appSave" class="btn" type="button">Save</button>
+    </details>
+
+    <section class="conn-docs">
+      <h3>Your documents</h3>
+      <p id="docsStatus" class="hint"></p>
+      <button id="docsSync" class="btn btn-small" type="button">Re-index now</button>
+    </section>
+    <p id="connResult" class="result" role="status"></p>
   </dialog>
 
   <div id="toast" class="toast" role="alert" hidden></div>

@@ -87,6 +87,25 @@
     return false;
   }
 
+  // Web sources under an answer: http(s) links only, opened in the normal browser.
+  function addSources(msgNode, sources) {
+    if (!msgNode || !Array.isArray(sources) || !sources.length) return;
+    const box = el("div", "sources");
+    box.append(el("span", "", "Sources:"));
+    for (const src of sources.slice(0, 12)) {
+      let url;
+      try { url = new URL(src.url); } catch { continue; }
+      if (url.protocol !== "https:" && url.protocol !== "http:") continue;
+      const a = el("a", "", src.title || url.hostname);
+      a.href = url.href;
+      a.title = url.href;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      box.append(a);
+    }
+    if (box.childElementCount > 1) msgNode.append(box);
+  }
+
   // ------------------------------------------------------------------ plan + activity
   const MARKS = { done: "✔", in_progress: "▶", failed: "✖", skipped: "–", pending: "○" };
 
@@ -177,11 +196,15 @@
       case "assistant.discard":
         if (state.streaming) { state.streaming.remove(); state.streaming = null; }
         break;
-      case "assistant.text":
+      case "assistant.text": {
+        const node = msg.streamed ? state.streaming : null;
         if (!(msg.streamed && finishStream(msg.text))) {
-          addMessage("assistant", msg.text, voice ? "🔊 JARVIS" : undefined);
+          addSources(addMessage("assistant", msg.text, voice ? "🔊 JARVIS" : undefined), msg.sources);
+        } else {
+          addSources(node, msg.sources);
         }
         break;
+      }
       case "assistant.progress":
         state.streaming = null;
         addMessage("progress", msg.text);
@@ -221,6 +244,19 @@
       case "setup.error":
         $("voiceResult").textContent = msg.error;
         $("voiceResult").className = "result bad";
+        break;
+      case "connections.changed": {
+        const wasSigningIn = !$("connWait").hidden;
+        renderConnections(msg);
+        if (wasSigningIn) connResult("Connected. JARVIS can now use this account.", true);
+        break;
+      }
+      case "connections.error":
+        $("connWait").hidden = true;
+        connResult(msg.error, false);
+        break;
+      case "documents.progress":
+        renderDocs({ enabled: true, ...msg });
         break;
       case "error":
         if (msg.setup_required) openWizard(3);
@@ -746,6 +782,133 @@
   }
 
   // ------------------------------------------------------------------ wiring
+  // ------------------------------------------------------------------ connections
+  const DEFAULT_CAPS = ["mail_read", "mail_draft", "calendar_read"];
+  const PROVIDER_NAMES = { microsoft: "Microsoft", google: "Google", imap: "Email (IMAP)" };
+
+  function connResult(text, ok) {
+    const r = $("connResult");
+    r.textContent = text;
+    r.className = `result ${ok ? "ok" : "bad"}`;
+  }
+
+  function capBoxes(container, caps, labels) {
+    const before = new Set([...container.querySelectorAll("input:checked")].map((i) => i.value));
+    const fresh = !container.childElementCount;
+    container.replaceChildren();
+    for (const cap of caps) {
+      const box = el("input");
+      box.type = "checkbox";
+      box.value = cap;
+      box.checked = fresh ? DEFAULT_CAPS.includes(cap) : before.has(cap);
+      const label = el("label", "choice");
+      label.append(box, el("span", "", labels[cap] || cap));
+      container.append(label);
+    }
+  }
+  const tickedCaps = (container) => [...container.querySelectorAll("input:checked")].map((i) => i.value);
+
+  function renderConnections(status) {
+    state.connections = status;
+    const list = $("connAccounts");
+    list.replaceChildren();
+    for (const a of status.accounts) {
+      const row = el("div", "conn-account");
+      const who = el("span", "who", a.email);
+      who.append(el("span", "what",
+        `${PROVIDER_NAMES[a.provider] || a.provider} · ${a.capabilities.map((c) => status.capabilities[c] || c).join(", ")}`));
+      row.append(who, smallButton("Disconnect", () => disconnectAccount(a)));
+      list.append(row);
+    }
+    if (!status.accounts.length) list.append(el("p", "hint", "No accounts connected yet."));
+    for (const card of document.querySelectorAll(".conn-card[data-provider]")) {
+      const p = card.dataset.provider;
+      capBoxes(card.querySelector(".caps"), status.provider_capabilities[p], status.capabilities);
+      const ready = status.apps[p];
+      const note = card.querySelector(".conn-note");
+      note.hidden = ready;
+      note.textContent = ready ? "" : "Sign-in isn't set up in this copy of JARVIS yet — see Advanced below.";
+      card.querySelector(".conn-go").disabled = !ready || Boolean(status.signing_in);
+    }
+    capBoxes($("imapCaps"), status.provider_capabilities.imap, status.capabilities);
+    $("connWait").hidden = !status.signing_in;
+  }
+
+  function renderDocs(d) {
+    const t = $("docsStatus");
+    $("docsSync").hidden = !d.enabled;
+    if (!d.enabled) { t.textContent = "“Ask my documents” is off. Turn it on in Settings → Features."; return; }
+    if (d.state === "downloading") t.textContent = d.total ? `Downloading the search model… ${Math.round(100 * d.done / d.total)}%` : "Downloading the search model…";
+    else if (d.state === "indexing") t.textContent = d.total ? `Indexing your files… ${d.done} of ${d.total}` : "Looking for new or changed files…";
+    else if (d.state === "error") t.textContent = `Indexing failed: ${d.error}`;
+    else if (d.files !== undefined) t.textContent = `${d.files} files indexed${d.failed ? ` (${d.failed} couldn't be read)` : ""}. JARVIS re-checks for changes every 30 minutes.`;
+    else t.textContent = d.model_ready === false ? "The search model will download shortly." : "Ready.";
+  }
+
+  async function openConnections() {
+    try {
+      const [status, settings, docs] = await Promise.all([
+        api("/v1/connections"), api("/v1/settings"), api("/v1/documents"),
+      ]);
+      renderConnections(status);
+      renderDocs(docs);
+      const c = settings.connections;
+      $("appMsId").value = c.microsoft_client_id;
+      $("appMsTenant").value = c.microsoft_tenant;
+      $("appGId").value = c.google_client_id;
+      $("appGSecret").value = c.google_client_secret;
+      $("connResult").textContent = "";
+      if (!$("connDlg").open) $("connDlg").showModal();
+    } catch (err) { toast(err.message); }
+  }
+
+  async function signIn(provider, card) {
+    const caps = tickedCaps(card.querySelector(".caps"));
+    if (!caps.length) { connResult("Tick at least one thing JARVIS may do.", false); return; }
+    try {
+      renderConnections(await post(`/v1/connections/${provider}/connect`, { capabilities: caps }));
+      connResult("", true);
+    } catch (err) { connResult(err.message, false); }
+  }
+
+  async function connectImap() {
+    const body = {
+      email: $("imEmail").value.trim(), username: $("imUser").value.trim(), password: $("imPass").value,
+      imap_host: $("imHost").value.trim(), imap_port: Number($("imPort").value),
+      smtp_host: $("smHost").value.trim(), smtp_port: Number($("smPort").value),
+      capabilities: tickedCaps($("imapCaps")),
+    };
+    $("imapGo").disabled = true;
+    connResult("Checking the mail server…", true);
+    try {
+      renderConnections(await post("/v1/connections/imap", body));
+      $("imPass").value = "";
+      connResult(`Connected ${body.email}.`, true);
+    } catch (err) { connResult(err.message, false); } finally { $("imapGo").disabled = false; }
+  }
+
+  async function disconnectAccount(a) {
+    if (!confirm(`Disconnect ${a.email}? JARVIS deletes its access on this PC.`)) return;
+    try {
+      renderConnections(await api(`/v1/connections/${encodeURIComponent(a.id)}`, { method: "DELETE" }));
+      connResult(`Disconnected ${a.email}.`, true);
+    } catch (err) { connResult(err.message, false); }
+  }
+
+  async function saveApps() {
+    try {
+      await api("/v1/settings", {
+        method: "PUT",
+        body: JSON.stringify({ connections: {
+          microsoft_client_id: $("appMsId").value.trim(), microsoft_tenant: $("appMsTenant").value.trim() || "common",
+          google_client_id: $("appGId").value.trim(), google_client_secret: $("appGSecret").value.trim(),
+        } }),
+      });
+      renderConnections(await api("/v1/connections"));
+      connResult("Saved.", true);
+    } catch (err) { connResult(err.message, false); }
+  }
+
   function wire() {
     $("composer").addEventListener("submit", (e) => { e.preventDefault(); submitGoal($("goal").value); });
     $("goal").addEventListener("keydown", (e) => {
@@ -759,6 +922,20 @@
     };
     $("voiceToggle").onclick = toggleVoice;
     $("setupBtn").onclick = () => openWizard(1);
+    $("connBtn").onclick = openConnections;
+    $("connClose").onclick = () => $("connDlg").close();
+    $("connCancel").onclick = async () => {
+      try { await post("/v1/connections/cancel"); } catch (err) { toast(err.message); }
+      $("connWait").hidden = true;
+    };
+    for (const card of document.querySelectorAll(".conn-card[data-provider]")) {
+      card.querySelector(".conn-go").onclick = () => signIn(card.dataset.provider, card);
+    }
+    $("imapGo").onclick = connectImap;
+    $("appSave").onclick = saveApps;
+    $("docsSync").onclick = async () => {
+      try { await post("/v1/documents/sync"); } catch (err) { toast(err.message); }
+    };
     for (const r of document.querySelectorAll('input[name="provider"]')) r.onchange = showProviderFields;
     for (const r of document.querySelectorAll('input[name="emailAccount"]')) {
       r.onchange = () => { $("workWarning").hidden = radio("emailAccount") !== "work"; };

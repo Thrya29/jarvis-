@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 import tomllib
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -21,8 +22,17 @@ from pydantic import BaseModel
 
 from jarvis.agent.events import Event, EventSink
 from jarvis.agent.loop import Agent
+from jarvis.connect.accounts import (
+    Account,
+    AccountError,
+    Capability,
+    ConnectionManager,
+    Provider,
+)
+from jarvis.connect.imap import ImapSettings
 from jarvis.core.config import (
     BudgetConfig,
+    ConnectionsConfig,
     FeaturesConfig,
     PersonaConfig,
     ProfileConfig,
@@ -43,6 +53,7 @@ from jarvis.voice.models import PIPER_VOICES
 log = logging.getLogger(__name__)
 
 Broadcast = Callable[[Event], Awaitable[None]]
+DOC_SYNC_EVERY_S = 30 * 60
 
 
 def update_config_file(paths: AppPaths, changes: dict[str, dict[str, Any]]) -> None:
@@ -96,6 +107,9 @@ class Hub:
         self.setup_progress: dict[str, Any] | None = None
         self._background: set[asyncio.Future[Any]] = set()
         self.loop: asyncio.AbstractEventLoop | None = None  # set at startup (tray uses it)
+        self._signin: asyncio.Task[Account] | None = None
+        self.docs_state: dict[str, Any] = {"state": "idle"}
+        self._doc_lock = asyncio.Lock()
 
     def _spawn(self, coro: Awaitable[Any]) -> None:
         """Fire-and-forget on the event loop, keeping a reference until it finishes."""
@@ -127,6 +141,12 @@ class Hub:
 
             self._store = open_store(self.settings, self.paths)
         return self._store
+
+    @property
+    def connections(self) -> ConnectionManager:
+        from jarvis.agent.factory import open_connections
+
+        return open_connections(self.settings, self.paths)
 
     # ------------------------------------------------------------------ agents
 
@@ -175,6 +195,8 @@ class Hub:
             "onboarded": self.settings.profile.onboarded,
             "spend_today_usd": round(self.meter.today_usd(), 4),
             "daily_cap_usd": self.settings.budget.daily_usd,
+            "documents": self.documents_status(),
+            "connected_accounts": len(self.connections.accounts()),
         }
 
     # ------------------------------------------------------------------ settings
@@ -191,6 +213,7 @@ class Hub:
             },
             "features": s.features.model_dump(mode="json"),
             "budget": s.budget.model_dump(mode="json"),
+            "connections": s.connections.model_dump(mode="json"),
             "voices": sorted(k for k in PIPER_VOICES if k != "amy"),
         }
 
@@ -205,6 +228,7 @@ class Hub:
             "persona": PersonaConfig,
             "features": FeaturesConfig,
             "budget": BudgetConfig,
+            "connections": ConnectionsConfig,
         }
         validated: dict[str, BaseModel] = {}
         for section, values in changes.items():
@@ -233,6 +257,8 @@ class Hub:
 
         if validated:
             self.generation += 1  # sessions rebuild agents with the new persona/profile
+            if "features" in validated and self.settings.features.documents.enabled:
+                self._spawn(self.index_documents())
             if self.voice_running and set(validated) & {"voice", "persona", "profile"}:
                 await self.stop_voice()
                 await self.start_voice()
@@ -375,10 +401,148 @@ class Hub:
         finally:
             self.setup_progress = None
 
+    # ------------------------------------------------------------------ connections
+
+    def connections_status(self) -> dict[str, Any]:
+        status = self.connections.status()
+        task = self._signin
+        # The sign-in task itself reports its result, by which point it's finished.
+        status["signing_in"] = (
+            task is not None and not task.done() and task is not asyncio.current_task()
+        )
+        return status
+
+    async def _connections_changed(self) -> None:
+        self.generation += 1  # agents rebuild with the new tools and account list
+        await self.broadcast({"type": "connections.changed", **self.connections_status()})
+
+    async def start_sign_in(self, provider: Provider, capabilities: list[Capability]) -> None:
+        """Open the provider's sign-in page; the result arrives as a broadcast event."""
+        if self._signin is not None and not self._signin.done():
+            raise AccountError("a sign-in is already in progress; finish or cancel it first")
+        manager = self.connections
+        manager.check(provider, capabilities)  # fail fast on bad input / missing app ID
+
+        async def run() -> Account:
+            try:
+                account = await manager.connect(provider, capabilities)
+            except asyncio.CancelledError:
+                await self.broadcast({"type": "connections.error", "error": "sign-in cancelled"})
+                raise
+            except AccountError as exc:
+                await self.broadcast({"type": "connections.error", "error": str(exc)})
+                raise
+            await self._connections_changed()
+            return account
+
+        self._signin = asyncio.ensure_future(run())
+        self._signin.add_done_callback(lambda t: t.cancelled() or t.exception())
+
+    async def cancel_sign_in(self) -> bool:
+        if self._signin is None or self._signin.done():
+            return False
+        self._signin.cancel()
+        with contextlib.suppress(asyncio.CancelledError, AccountError):
+            await self._signin
+        return True
+
+    async def connect_imap(
+        self, settings: ImapSettings, password: str, capabilities: list[Capability]
+    ) -> Account:
+        account = await self.connections.connect_imap(settings, password, capabilities)
+        await self._connections_changed()
+        return account
+
+    async def disconnect(self, account_id: str) -> bool:
+        removed = await self.connections.disconnect(account_id)
+        if removed:
+            await self._connections_changed()
+        return removed
+
+    # ------------------------------------------------------------------ documents
+
+    def documents_status(self) -> dict[str, Any]:
+        from jarvis.agent.factory import open_documents
+        from jarvis.voice.runtime import document_files, model_store
+
+        docs = self.settings.features.documents
+        out: dict[str, Any] = {"enabled": docs.enabled, **self.docs_state}
+        if not docs.enabled:
+            return out
+        try:
+            out["model_ready"] = not model_store(self.paths).missing(document_files(self.settings))
+            index = open_documents(self.settings, self.paths) if out["model_ready"] else None
+            if index is not None:
+                out.update(index.stats())
+        except Exception as exc:  # status must never break the UI
+            out["error"] = str(exc)
+        return out
+
+    async def index_documents(self) -> None:
+        """Download the model if needed, then bring the index up to date."""
+        from jarvis.agent.factory import open_documents
+        from jarvis.safety.policy import PathGuard
+        from jarvis.voice.runtime import setup_document_models
+
+        if not self.settings.features.documents.enabled or self._doc_lock.locked():
+            return
+        loop = asyncio.get_running_loop()
+
+        def emit(state: dict[str, Any]) -> None:
+            self.docs_state = state
+            event = {"type": "documents.progress", **state}
+            loop.call_soon_threadsafe(lambda: self._spawn(self.broadcast(event)))
+
+        async with self._doc_lock:
+            try:
+                emit({"state": "downloading"})
+                await asyncio.to_thread(
+                    setup_document_models,
+                    self.settings,
+                    self.paths,
+                    lambda name, done, total: emit(
+                        {"state": "downloading", "done": done, "total": total}
+                    ),
+                )
+                index = open_documents(self.settings, self.paths)
+                if index is None:
+                    return
+                docs = self.settings.features.documents
+                guard = PathGuard(
+                    self.settings.safety.allowed_roots,
+                    deny_roots=[self.paths.config_dir, self.paths.data_dir, self.paths.log_dir],
+                )
+                folders = docs.folders or list(guard.allowed)
+                emit({"state": "indexing"})
+                report = await asyncio.to_thread(
+                    index.sync,
+                    folders,
+                    guard,
+                    3600.0,
+                    lambda done, total: emit({"state": "indexing", "done": done, "total": total}),
+                )
+                emit(
+                    {
+                        "state": "idle",
+                        "indexed": report.indexed,
+                        "skipped_folders": [str(f) for f in report.skipped_folders],
+                        "finished_at": time.time(),
+                    }
+                )
+            except Exception as exc:
+                log.exception("document indexing failed")
+                emit({"state": "error", "error": str(exc)})
+
+    async def _documents_loop(self) -> None:
+        while True:
+            await self.index_documents()
+            await asyncio.sleep(DOC_SYNC_EVERY_S)
+
     # ------------------------------------------------------------------ lifecycle
 
     async def startup(self) -> None:
         self.loop = asyncio.get_running_loop()
+        self._spawn(self._documents_loop())
         if self.settings.voice.enabled:
             try:
                 self.provider()
@@ -388,6 +552,9 @@ class Hub:
             await self.start_voice()
 
     async def shutdown(self) -> None:
+        await self.cancel_sign_in()
+        for fut in list(self._background):
+            fut.cancel()
         await self.stop_voice()
         if self._provider is not None:
             with contextlib.suppress(Exception):

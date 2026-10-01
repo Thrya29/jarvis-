@@ -4,9 +4,11 @@ An AI control layer for Windows. Give it a goal in plain language — by voice o
 plans the steps, operates your apps, files, browser and terminal, watches the screen to verify
 each step, and reports back. Full-duplex voice means you can interrupt it mid-sentence.
 
-> **Version 2.0.** A desktop app with a tray icon, full-duplex voice, screen control,
-> memory and saved workflows, now personalised to each user by a setup wizard. Talk to JARVIS, interrupt it mid-sentence, and change your
-> instruction on the fly. It plans and works through files, Office documents, email drafts,
+> **Version 2.1.** A desktop app with a tray icon, full-duplex voice, screen control,
+> memory and saved workflows, personalised to each user by a setup wizard. New in 2.1:
+> each user connects their own email, calendar and cloud files, JARVIS searches the web
+> with sources, and it answers questions from your documents. Talk to JARVIS, interrupt
+> it mid-sentence, and change your instruction on the fly. It plans and works through files, Office documents, email drafts,
 > the shell, the web and any app on screen, under a safety layer, and tells you what it did.
 > See [CHANGELOG.md](CHANGELOG.md).
 
@@ -274,6 +276,42 @@ What 2.0 changes in practice:
 - **Spend tracking.** The top bar shows today's estimated spend against your limit. At the
   limit, JARVIS stops calling the API until midnight.
 
+## Connections, web research and documents (v2.1)
+
+**Connections** (button in the top bar) lets each user plug in only what they want:
+
+| Account | What JARVIS can do (you tick each one) |
+|---|---|
+| Microsoft 365 / Outlook (work or personal) | Read email, write drafts, send, read calendar, create events, search and download OneDrive/SharePoint files |
+| Google | The same for Gmail, Google Calendar and Google Drive (Docs/Sheets/Slides download as Word/Excel/PowerPoint) |
+| Other email via IMAP (Zoho, company servers) | Read email, write drafts, send (SMTP) |
+
+- You sign in on **Microsoft's or Google's own page**; JARVIS never sees your password and
+  only gets the permissions you ticked. Tokens are encrypted on this PC (Windows DPAPI).
+- **Sending email and inviting people always asks you first**, showing the real
+  recipients from the draft on the server, not what the AI says it wrote.
+- Emails, events and files are treated as untrusted content: text in an email can't
+  instruct JARVIS.
+- Try: *"What did Anna email me about the budget?"*, *"Draft a reply saying Thursday
+  works"*, *"What's on my calendar tomorrow?"*, *"Find the Q3 deck in OneDrive and save it
+  to Documents."*
+
+> **One-time setup for "Sign in with Microsoft/Google":** this copy of JARVIS must be
+> registered (free) with Microsoft and Google, which gives it an app ID. Follow
+> [docs/connections-setup.md](docs/connections-setup.md), then paste the IDs under
+> **Connections → Advanced**. IMAP accounts work without it.
+
+**Web research** (Settings → Features) lets JARVIS search and read the web on Anthropic's
+servers and cite its sources. Links appear under the answer. Each search costs about
+$0.01, which is included in the spend shown in the top bar.
+
+**Ask my documents** (Settings → Features) indexes the folders you choose, on this PC,
+with a small embedding model (BGE-small, ~35 MB, downloaded and hash-verified on first
+use). Search combines meaning and keywords, so *"when does the Acme contract renew?"*
+finds the right paragraph in a Word file. It handles text, Markdown, PDF, Word and Excel files,
+re-checks for changes every 30 minutes, and only indexes allowed folders. The
+status is shown under **Connections → Your documents**.
+
 ## Screen control (M2)
 
 JARVIS can see the screen and operate any app:
@@ -333,6 +371,8 @@ Set `JARVIS_HOME` to relocate all config, data and logs into one folder (portabl
 - Content from files, web pages and command output is fenced as untrusted data for the model.
 - Child processes get an environment with API keys and tokens removed.
 - A global kill hotkey (`Ctrl+Alt+J`) halts all activity (M2+).
+- Connected accounts get only the permissions the user ticked; tokens are DPAPI-encrypted
+  per Windows user, and sending email or inviting people always asks first (v2.1).
 
 See [SECURITY.md](SECURITY.md) and [docs/architecture.md](docs/architecture.md).
 
@@ -346,6 +386,10 @@ See [SECURITY.md](SECURITY.md) and [docs/architecture.md](docs/architecture.md).
 | M3 | Full-duplex voice: echo cancellation, VAD, barge-in, local STT/TTS, wake word, spoken approvals | ✅ |
 | M4 | Long-term memory, reusable workflows, task history and resume | ✅ |
 | M5 | Desktop app (window + tray), first-run setup, installer, V1 release | ✅ |
+| 2.0 | Setup wizard, personality, streaming replies, quick replies, budget | ✅ |
+| 2.1 | Connections (Microsoft, Google, IMAP), web research with sources, Ask my documents | ✅ |
+| 2.2 | New interface with live maps (sky, network, situation) | Planned |
+| 2.3 | Floating see-through overlay | Planned |
 
 ## Development
 

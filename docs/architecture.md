@@ -179,6 +179,34 @@ Player ◄── Piper TTS (sentence by sentence)          │
 - `voice/engine.py`: the conversation state machine (see its module docstring).
 - `voice/models.py`: pinned, hash-verified model downloads into the cache directory.
 
+## Connections (v2.1)
+
+- `connect/oauth.py`: authorization code + PKCE with a one-shot loopback listener
+  (`http://localhost:<random port>`), `state` check, refresh and friendly errors.
+- `connect/secure_store.py`: DPAPI-encrypted JSON blobs per account.
+- `connect/accounts.py`: `ConnectionManager` with the account registry
+  (`connections.json`, non-secret), the capability → scope map, `pick()` (named or first
+  capable account), token refresh under a per-account lock, and `open()`, which yields a
+  service bound to a fresh HTTP client.
+- `connect/services.py`: `MicrosoftService` (Graph) and `GoogleService` (Gmail /
+  Calendar / Drive REST).
+- `connect/imap.py`: `ImapService` (imaplib/smtplib in a worker thread, short-lived TLS
+  connections). All three expose the same mail interface.
+- `tools/connected.py`: eight tools. Connected tools are registered only while at least one
+  account exists, and the system prompt lists each account with its allowed actions.
+  Connecting or disconnecting bumps the hub generation, so sessions rebuild their agents.
+- Sign-in runs as a background task in the hub. The result is broadcast as
+  `connections.changed` / `connections.error`, so the HTTP request returns immediately.
+- `ToolRegistry` calls `Tool.preview()` before an approval, so prompts show authoritative
+  details (e.g. a draft's real recipients).
+
+## Ask my documents (v2.1)
+
+`knowledge/index.py` stores chunks (1,200 characters, 150 overlap), float16 BGE-small
+vectors and an FTS5 table in `documents.db`. Search fuses vector and keyword rankings
+with reciprocal-rank fusion. The hub re-syncs every 30 minutes (incremental, by size and
+mtime); `search_documents` also catches up within a 45-second budget if the index is stale.
+
 ## Agent loop invariants
 
 - The conversation is append-only. Claude's assistant content, including thinking blocks, is

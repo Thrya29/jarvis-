@@ -73,8 +73,13 @@ class ScriptedProvider:
         self.quick: Any = None
 
     def new_conversation(
-        self, system: str, tools: list[ToolSpec], computer_use: bool = False
+        self,
+        system: str,
+        tools: list[ToolSpec],
+        computer_use: bool = False,
+        web_research: bool = False,
     ) -> ScriptedConversation:
+        self.web_research = web_research
         self.system, self.tools, self.computer_use = system, tools, computer_use
         return self.conversation
 

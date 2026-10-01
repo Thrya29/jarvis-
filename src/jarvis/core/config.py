@@ -224,6 +224,20 @@ class FeaturesConfig(BaseModel):
     helpers: bool = False
 
 
+class ConnectionsConfig(BaseModel):
+    """App registrations used for "Sign in with Microsoft/Google".
+
+    These identify the JARVIS app to the provider; they are not user secrets (desktop
+    apps can't keep secrets, which is why sign-in uses PKCE). Tokens are never stored
+    here: they live DPAPI-encrypted in the data folder. See docs/connections-setup.md.
+    """
+
+    microsoft_client_id: str = ""
+    microsoft_tenant: str = Field(default="common", pattern=r"^[A-Za-z0-9.-]{1,64}$")
+    google_client_id: str = ""
+    google_client_secret: str = ""  # Google "Desktop app" clients issue a non-confidential one
+
+
 class BudgetConfig(BaseModel):
     # Estimated API spend per day (USD); 0 means no limit.
     daily_usd: float = Field(default=5.0, ge=0, le=1000)
@@ -317,6 +331,7 @@ class Settings(BaseSettings):
     persona: PersonaConfig = PersonaConfig()
     features: FeaturesConfig = FeaturesConfig()
     budget: BudgetConfig = BudgetConfig()
+    connections: ConnectionsConfig = ConnectionsConfig()
     logging: LoggingConfig = LoggingConfig()
 
     @classmethod

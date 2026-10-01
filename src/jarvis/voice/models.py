@@ -22,6 +22,9 @@ PIPER_REV = "c10ece1aade47bb51c153c893d14e5bf8e5b7117"
 PIPER = f"https://huggingface.co/rhasspy/piper-voices/resolve/{PIPER_REV}/en/en_US"
 PIPER_GB = f"https://huggingface.co/rhasspy/piper-voices/resolve/{PIPER_REV}/en/en_GB"
 
+BGE_REV = "ea104dacec62c0de699686887e3f920caeb4f3e3"
+BGE = f"https://huggingface.co/Xenova/bge-small-en-v1.5/resolve/{BGE_REV}"
+
 # faster-whisper models come from Hugging Face at a pinned commit.
 WHISPER_REVISIONS = {
     "tiny.en": None,
@@ -70,6 +73,18 @@ FILES: dict[str, ModelFile] = {
             f"{PIPER}/lessac/medium/en_US-lessac-medium.onnx.json",
             "efe19c417bed055f2d69908248c6ba650fa135bc868b0e6abb3da181dab690a0",
             4_885,
+        ),
+        ModelFile(
+            "bge-small-en-v1.5-int8.onnx",
+            f"{BGE}/onnx/model_quantized.onnx",
+            "6c9c6101a956d62dfb5e7190c538226c0c5bb9cb27b651234b6df063ee7dbfe4",
+            34_014_426,
+        ),
+        ModelFile(
+            "bge-small-en-v1.5-tokenizer.json",
+            f"{BGE}/tokenizer.json",
+            "d241a60d5e8f04cc1b2b3e9ef7a4921b27bf526d9f6050ab90f9267a1f9e5c66",
+            711_396,
         ),
         ModelFile(
             "en_GB-alan-medium.onnx",
@@ -123,6 +138,7 @@ FILES: dict[str, ModelFile] = {
 }
 
 WAKE_FILES = ["melspectrogram.onnx", "embedding_model.onnx", "hey_jarvis_v0.1.onnx"]
+DOC_FILES = ["bge-small-en-v1.5-int8.onnx", "bge-small-en-v1.5-tokenizer.json"]
 # Voice choice (settings) -> Piper voice model.
 PIPER_VOICES = {
     "british_male": "en_GB-alan-medium",
