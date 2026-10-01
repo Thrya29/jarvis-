@@ -42,6 +42,7 @@ from jarvis.connect.imap import ImapSettings
 from jarvis.core.config import LLMProvider as ProviderName
 from jarvis.core.config import Settings
 from jarvis.llm.base import LLMError
+from jarvis.maps.weather import MapDataError
 from jarvis.server.hub import Hub
 from jarvis.server.session import AgentFactory, ClientSession, TaskBoard
 
@@ -343,6 +344,37 @@ def create_app(
             raise HTTPException(400, "'Ask my documents' is turned off")
         board.track(asyncio.create_task(h.index_documents()))
         return {"status": "started"}
+
+    # ------------------------------------------------------------------ maps
+
+    def maps_on(panel: str | None = None) -> Hub:
+        h = need_hub()
+        cfg = h.settings.features.maps
+        if not cfg.enabled or (panel is not None and not getattr(cfg, panel)):
+            raise HTTPException(409, "This map is turned off in Settings → Features.")
+        return h
+
+    @app.get("/v1/maps/sky", dependencies=auth)
+    async def map_sky() -> dict[str, Any]:
+        return await maps_on("sky").maps.sky_view()
+
+    @app.get("/v1/maps/network", dependencies=auth)
+    async def map_network() -> dict[str, Any]:
+        return await maps_on("network").maps.network_view()
+
+    @app.get("/v1/maps/situation", dependencies=auth)
+    async def map_situation() -> dict[str, Any]:
+        return await maps_on("situation").maps.situation_view()
+
+    @app.get("/v1/maps/locate", dependencies=auth)
+    async def map_locate(q: str) -> dict[str, Any]:
+        if not 1 <= len(q.strip()) <= 100:
+            raise HTTPException(422, "enter a place name")
+        try:
+            place = await maps_on().maps.locate(q)
+        except MapDataError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return {"name": place.label, "lat": place.latitude, "lon": place.longitude}
 
     # ------------------------------------------------------------------ websocket
 

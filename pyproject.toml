@@ -39,6 +39,8 @@ dependencies = [
     "piper-tts>=1.8.0",
     "pystray>=0.19.5",
     "tokenizers>=0.23.2",
+    "psutil>=7.0",
+    "maxminddb>=2.6",
 ]
 
 [project.scripts]
@@ -54,6 +56,7 @@ dev = [
     "pyinstaller>=6.11",
     "types-openpyxl>=3.1.5.20260827",
     "types-pywin32>=312.0.0.20260928",
+    "types-psutil>=7.2.2.20260906",
 ]
 
 [build-system]

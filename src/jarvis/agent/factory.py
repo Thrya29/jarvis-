@@ -18,6 +18,7 @@ from jarvis.knowledge.index import DocIndex, Embedder
 from jarvis.llm import create_provider
 from jarvis.llm.base import LLMProvider
 from jarvis.llm.budget import SpendMeter
+from jarvis.maps.service import MapService
 from jarvis.memory.store import Store
 from jarvis.safety.policy import Approver, PathGuard
 from jarvis.tools.base import Tool, ToolContext, ToolRegistry
@@ -27,6 +28,7 @@ from jarvis.tools.execution import EXEC_TOOLS
 from jarvis.tools.files import FILE_TOOLS
 from jarvis.tools.knowledge import KNOWLEDGE_TOOLS
 from jarvis.tools.mail import EMAIL_TOOLS
+from jarvis.tools.maps import MAP_TOOLS
 from jarvis.tools.memory import MEMORY_TOOLS
 from jarvis.tools.office import OFFICE_TOOLS
 from jarvis.tools.web import WEB_TOOLS
@@ -37,6 +39,7 @@ def all_tools(
     memory: bool = False,
     documents: bool = False,
     connected: bool = False,
+    maps: bool = False,
 ) -> list[Tool[Any]]:
     tools = [*BUILTIN_TOOLS, *FILE_TOOLS, *OFFICE_TOOLS, *EMAIL_TOOLS, *EXEC_TOOLS, *WEB_TOOLS]
     if memory:
@@ -45,6 +48,8 @@ def all_tools(
         tools += KNOWLEDGE_TOOLS
     if connected:
         tools += CONNECTED_TOOLS
+    if maps:
+        tools += MAP_TOOLS
     if desktop:
         tools += DESKTOP_TOOLS
     return tools
@@ -90,6 +95,25 @@ def open_connections(settings: Settings, paths: AppPaths) -> ConnectionManager:
     manager, holder = _CONNECTIONS[key]
     holder[0] = settings
     return manager
+
+
+_MAPS: dict[Path, tuple[MapService, list[Settings]]] = {}
+
+
+def open_maps(settings: Settings, paths: AppPaths) -> MapService:
+    """The shared map service (caches are per process, not per agent)."""
+    key = paths.data_dir
+    if key not in _MAPS:
+        holder = [settings]
+        service = MapService(
+            lambda: holder[0],
+            paths.data_dir,
+            connections=lambda: open_connections(holder[0], paths),
+        )
+        _MAPS[key] = (service, holder)
+    service, holder = _MAPS[key]
+    holder[0] = settings
+    return service
 
 
 def open_store(settings: Settings, paths: AppPaths) -> Store | None:
@@ -141,6 +165,7 @@ def build_agent(
         store=store if store is not None else open_store(settings, paths),
         documents=open_documents(settings, paths),
         connections=open_connections(settings, paths),
+        maps=open_maps(settings, paths) if settings.features.maps.enabled else None,
     )
     provider = provider or create_provider(settings.llm, open_meter(settings, paths))
     tools = all_tools(
@@ -148,6 +173,7 @@ def build_agent(
         memory=ctx.store is not None,
         documents=ctx.documents is not None,
         connected=bool(ctx.connections.accounts()),
+        maps=ctx.maps is not None,
     )
     agent = Agent(provider, ToolRegistry(tools), ctx, settings.agent, emit)
     return agent, provider

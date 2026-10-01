@@ -146,6 +146,10 @@ class ProfileConfig(BaseModel):
     name: str = Field(default="", max_length=60)
     address: AddressMode = AddressMode.NONE
     nickname: str = Field(default="", max_length=40)
+    # Home location for weather and the maps; coordinates are looked up from the name.
+    location: str = Field(default="", max_length=100)
+    latitude: float | None = Field(default=None, ge=-90, le=90)
+    longitude: float | None = Field(default=None, ge=-180, le=180)
     # Set once the user has been through the setup wizard.
     onboarded: bool = False
 
@@ -197,6 +201,16 @@ class ProtocolsFeature(BaseModel):
     briefing_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
+class MapsFeature(BaseModel):
+    """Live map panels (v2.2). Each panel only contacts its own data source."""
+
+    enabled: bool = False
+    sky: bool = True  # aircraft overhead (OpenSky Network)
+    network: bool = True  # who this PC is talking to (local + DB-IP lite database)
+    situation: bool = True  # weather (Open-Meteo) and today's calendar
+    sky_radius_km: int = Field(default=150, ge=20, le=400)
+
+
 class HudFeature(BaseModel):
     enabled: bool = False
     dashboard: bool = False  # full dashboard on another monitor
@@ -217,6 +231,7 @@ class FeaturesConfig(BaseModel):
     documents: DocumentsFeature = DocumentsFeature()
     email: EmailFeature = EmailFeature()
     protocols: ProtocolsFeature = ProtocolsFeature()
+    maps: MapsFeature = MapsFeature()
     hud: HudFeature = HudFeature()
     phone: PhoneFeature = PhoneFeature()
     smart_home: SmartHomeFeature = SmartHomeFeature()
