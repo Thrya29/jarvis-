@@ -10,6 +10,12 @@ each step, and reports back. Full-duplex voice means you can interrupt it mid-se
 > the shell, the web and any app on screen, under a safety layer, and tells you what it did.
 > See [CHANGELOG.md](CHANGELOG.md).
 
+![JARVIS handling a spoken request: plan, progress, approval, summary](docs/media/jarvis-demo.gif)
+
+▶ **[Watch the 50-second video with narration](docs/media/jarvis-demo.mp4)**
+
+<sub>Real JARVIS UI with demo data; narration in JARVIS's own on-device voice.</sub>
+
 ## Screenshots
 
 **At work:** the live plan, the activity feed, and an approval before anything risky. The
