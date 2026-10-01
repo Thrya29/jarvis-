@@ -113,6 +113,31 @@ class TaskBoard:
         return len(live)
 
 
+class SessionRegistry:
+    """All connected clients. Observers (the floating overlay) see every session's task
+    events, and an approval can be answered from any client: the user is the same."""
+
+    def __init__(self) -> None:
+        self.sessions: set[ClientSession] = set()
+
+    async def broadcast(self, event: Event) -> None:
+        for s in list(self.sessions):
+            await s.send(event)
+
+    async def mirror(self, origin: ClientSession, event: Event) -> None:
+        for s in list(self.sessions):
+            if s.observer and s is not origin:
+                await s.send(event)
+
+    async def answer(self, key: str, payload: dict[str, Any]) -> bool:
+        for s in list(self.sessions):
+            if s.approver.resolve(key, payload):
+                # Close the same prompt in every other window.
+                await self.broadcast({"type": "approval.resolved", "id": key})
+                return True
+        return False
+
+
 class ClientSession:
     """One connected UI/client. Its agent (conversation) is created on first use, and
     rebuilt when ``generation()`` changes (e.g. after the API key or model changed)."""
@@ -123,14 +148,18 @@ class ClientSession:
         factory: AgentFactory | None,
         board: TaskBoard,
         generation: Callable[[], int] = lambda: 0,
+        registry: SessionRegistry | None = None,
+        observer: bool = False,
     ):
         self._ws = ws
         self._send_lock = asyncio.Lock()
         self._board = board
         self._factory = factory
         self._generation = generation
+        self._registry = registry
+        self.observer = observer
         self._agent_gen = -1
-        self.approver = WebSocketApprover(self.send)
+        self.approver = WebSocketApprover(self.emit)
         self._agent: Agent | None = None
         self._task: asyncio.Task[None] | None = None
 
@@ -144,7 +173,7 @@ class ClientSession:
                 self._agent.close()
                 self._agent = None
             try:
-                self._agent = self._factory(self.approver, self.send)
+                self._agent = self._factory(self.approver, self.emit)
             except LLMError as exc:
                 await self.send({"type": "error", "error": str(exc), "setup_required": True})
                 return None
@@ -155,6 +184,12 @@ class ClientSession:
         async with self._send_lock:
             with contextlib.suppress(RuntimeError):  # socket already closed
                 await self._ws.send_json(message)
+
+    async def emit(self, message: Event) -> None:
+        """A task event: to this client, and mirrored to observers."""
+        await self.send(message)
+        if self._registry is not None:
+            await self._registry.mirror(self, message)
 
     async def handle(self, msg: dict[str, Any]) -> None:
         kind = msg.get("type")
@@ -168,7 +203,11 @@ class ClientSession:
             if self._task and not self._task.done():
                 self._task.cancel()
         elif kind == "approval.response" or kind == "ask.response":
-            self.approver.resolve(str(msg.get("id")), msg)
+            key = str(msg.get("id"))
+            if self._registry is not None:
+                await self._registry.answer(key, msg)
+            else:
+                self.approver.resolve(key, msg)
         else:
             await self.send({"type": "error", "error": f"unsupported message type {kind!r}"})
 

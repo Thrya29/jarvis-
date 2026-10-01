@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 from jarvis.agent.events import Event, EventSink
 from jarvis.agent.loop import Agent
+from jarvis.app.overlay import HIDE_HOTKEY, INTERACT_HOTKEY, Overlay
 from jarvis.connect.accounts import (
     Account,
     AccountError,
@@ -112,6 +113,9 @@ class Hub:
         self._signin: asyncio.Task[Account] | None = None
         self.docs_state: dict[str, Any] = {"state": "idle"}
         self._doc_lock = asyncio.Lock()
+        # Desktop mode only (set by the daemon): the main window opener and the overlay.
+        self.open_ui: Callable[[], None] | None = None
+        self.overlay: Overlay | None = None
 
     def _spawn(self, coro: Awaitable[Any]) -> None:
         """Fire-and-forget on the event loop, keeping a reference until it finishes."""
@@ -205,6 +209,7 @@ class Hub:
             "daily_cap_usd": self.settings.budget.daily_usd,
             "documents": self.documents_status(),
             "connected_accounts": len(self.connections.accounts()),
+            "overlay": self.overlay_status(),
         }
 
     # ------------------------------------------------------------------ settings
@@ -286,6 +291,8 @@ class Hub:
             self.generation += 1  # sessions rebuild agents with the new persona/profile
             if "features" in validated and self.settings.features.documents.enabled:
                 self._spawn(self.index_documents())
+            if "features" in validated:
+                self._sync_overlay()
             if self.voice_running and set(validated) & {"voice", "persona", "profile"}:
                 await self.stop_voice()
                 await self.start_voice()
@@ -427,6 +434,46 @@ class Hub:
             await self.broadcast({"type": "setup.error", "error": str(exc)})
         finally:
             self.setup_progress = None
+
+    # ------------------------------------------------------------------ window + overlay
+
+    async def show_window(self) -> bool:
+        if self.open_ui is None:
+            return False
+        await asyncio.to_thread(self.open_ui)
+        return True
+
+    def overlay_status(self) -> dict[str, Any]:
+        o = self.overlay
+        return {
+            "enabled": self.settings.features.hud.enabled,
+            "available": o is not None and o.available,
+            "running": o is not None and o.running,
+            "interact_hotkey": INTERACT_HOTKEY,
+            "hide_hotkey": HIDE_HOTKEY,
+        }
+
+    def _sync_overlay(self) -> None:
+        """Run the overlay exactly when the feature is on (desktop mode only)."""
+        o = self.overlay
+        if o is None:
+            return
+        want = self.settings.features.hud.enabled
+        try:
+            if want and not o.running:
+                o.start()
+            elif not want and o.running:
+                o.stop()
+        except OSError as exc:
+            log.warning("overlay: %s", exc)
+
+    async def set_overlay_enabled(self, enabled: bool) -> None:
+        if enabled and (self.overlay is None or not self.overlay.available):
+            raise OSError(
+                "the floating overlay isn't available here (it runs with the desktop app, "
+                "and needs jarvis-overlay.exe)"
+            )
+        await self.update_settings({"features": {"hud": {"enabled": enabled}}})
 
     # ------------------------------------------------------------------ connections
 
@@ -570,6 +617,7 @@ class Hub:
     async def startup(self) -> None:
         self.loop = asyncio.get_running_loop()
         self._spawn(self._documents_loop())
+        self._sync_overlay()
         if self.settings.voice.enabled:
             try:
                 self.provider()
@@ -579,6 +627,8 @@ class Hub:
             await self.start_voice()
 
     async def shutdown(self) -> None:
+        if self.overlay is not None:
+            self.overlay.stop()
         await self.cancel_sign_in()
         from jarvis.agent.factory import _MAPS
 

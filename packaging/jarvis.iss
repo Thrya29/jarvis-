@@ -65,6 +65,7 @@ Filename: "{app}\jarvisw.exe"; Parameters: "app"; Description: "Start JARVIS"; \
 ; Stop a running JARVIS so its files can be removed (user data is kept).
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM jarvisw.exe /T"; Flags: runhidden; RunOnceId: "StopJarvisw"
 Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM jarvis.exe /T"; Flags: runhidden; RunOnceId: "StopJarvis"
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /IM jarvis-overlay.exe"; Flags: runhidden; RunOnceId: "StopOverlay"
 
 [Code]
 function NeedsAddPath(Dir: string): Boolean;

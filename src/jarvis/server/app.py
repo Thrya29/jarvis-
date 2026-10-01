@@ -44,7 +44,7 @@ from jarvis.core.config import Settings
 from jarvis.llm.base import LLMError
 from jarvis.maps.weather import MapDataError
 from jarvis.server.hub import Hub
-from jarvis.server.session import AgentFactory, ClientSession, TaskBoard
+from jarvis.server.session import AgentFactory, ClientSession, SessionRegistry, TaskBoard
 
 log = logging.getLogger(__name__)
 WS_AUTH_TIMEOUT_S = 5.0
@@ -86,11 +86,11 @@ def create_app(
 ) -> FastAPI:
     board = hub.board if hub is not None else TaskBoard()
     factory = hub.agent_factory if hub is not None and agent_factory is None else agent_factory
-    clients: set[ClientSession] = set()
+    registry = SessionRegistry()
+    clients = registry.sessions
 
     async def broadcast(event: Event) -> None:
-        for c in list(clients):
-            await c.send(event)
+        await registry.broadcast(event)
 
     if hub is not None:
         hub.attach_broadcast(broadcast)
@@ -349,6 +349,21 @@ def create_app(
         board.track(asyncio.create_task(h.index_documents()))
         return {"status": "started"}
 
+    # ------------------------------------------------------------------ window + overlay
+
+    @app.post("/v1/window/show", dependencies=auth)
+    async def show_window() -> dict[str, bool]:
+        return {"shown": await need_hub().show_window()}
+
+    @app.post("/v1/overlay", dependencies=auth)
+    async def set_overlay(enabled: Annotated[bool, Body(embed=True)]) -> dict[str, Any]:
+        h = need_hub()
+        try:
+            await h.set_overlay_enabled(enabled)
+        except OSError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return h.overlay_status()
+
     # ------------------------------------------------------------------ maps
 
     def maps_on(panel: str | None = None) -> Hub:
@@ -399,7 +414,10 @@ def create_app(
             await websocket.close(code=4401)
             return
         gen = (lambda: hub.generation) if hub is not None else (lambda: 0)
-        session = ClientSession(websocket, factory, board, gen)
+        # The floating overlay connects as an observer: it sees every task's events.
+        session = ClientSession(
+            websocket, factory, board, gen, registry, observer=bool(hello.get("observe"))
+        )
         clients.add(session)
         await session.send({"type": "ready", "version": __version__, "busy": board.busy})
         try:

@@ -33,6 +33,13 @@ jobs:
 
       - run: uv run python packaging/make_icon.py
       - run: uv run pyinstaller packaging/jarvis.spec --noconfirm --distpath dist --workpath build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: overlay
+      - name: Build the overlay into the app folder
+        shell: pwsh
+        run: ./packaging/build_overlay.ps1 -Dest dist/jarvis
 
       - name: Build installer
         shell: pwsh

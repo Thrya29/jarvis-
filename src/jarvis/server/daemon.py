@@ -57,6 +57,10 @@ class _Tray:
         def toggle_voice(icon: Any, item: Any) -> None:
             call(lambda: self._hub.set_voice_enabled(not self._hub.voice_running))
 
+        def toggle_overlay(icon: Any, item: Any) -> None:
+            enabled = self._hub.overlay is not None and self._hub.overlay.running
+            call(lambda: self._hub.set_overlay_enabled(not enabled))
+
         def stop_tasks(icon: Any, item: Any) -> None:
             if self._hub.loop is not None:
                 self._hub.loop.call_soon_threadsafe(self._hub.board.cancel_all)
@@ -69,6 +73,12 @@ class _Tray:
             pystray.MenuItem("Open JARVIS", lambda icon, item: self._open_ui(), default=True),
             pystray.MenuItem(
                 "Voice (Hey Jarvis)", toggle_voice, checked=lambda item: self._hub.voice_running
+            ),
+            pystray.MenuItem(
+                "Floating overlay",
+                toggle_overlay,
+                checked=lambda item: self._hub.overlay is not None and self._hub.overlay.running,
+                visible=self._hub.overlay is not None and self._hub.overlay.available,
             ),
             pystray.MenuItem(
                 f"Stop current task ({self._hub.settings.safety.kill_hotkey.upper()})", stop_tasks
@@ -109,6 +119,11 @@ def serve(settings: Settings, paths: AppPaths, *, desktop: bool = False, show: b
     try:
         audit = AuditLog(paths.audit_log)
         hub = Hub(settings, paths)
+        if desktop:
+            from jarvis.app.overlay import Overlay
+
+            hub.open_ui = open_ui
+            hub.overlay = Overlay(port, token)
         app = create_app(settings, token, kill_switch=True, hub=hub)
         server = uvicorn.Server(
             uvicorn.Config(
