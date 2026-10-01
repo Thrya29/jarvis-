@@ -52,9 +52,60 @@ jobs:
           $changes = git status --porcelain -- ../src/jarvis/ui
           if ($changes) { $changes; Write-Error "Run 'npm run build' in frontend/ and commit src/jarvis/ui"; exit 1 }
 
+  overlay:
+    name: Overlay (Rust)
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: overlay
+      - name: Build
+        shell: pwsh
+        run: ./packaging/build_overlay.ps1
+      - name: Format, lint, unit tests
+        shell: pwsh
+        working-directory: overlay
+        run: |
+          cargo fmt --check
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          cargo clippy --release -- -D warnings
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          cargo test --release
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+      - name: Smoke test (starts, rejects foreign URLs, exits with its parent)
+        shell: pwsh
+        run: |
+          $exe = "overlay\target\release\jarvis-overlay.exe"
+          $bad = Start-Process $exe -ArgumentList "--url", "https://example.com/" -PassThru -Wait
+          if ($bad.ExitCode -ne 2) { Write-Error "foreign URL was not rejected ($($bad.ExitCode))"; exit 1 }
+          $parent = Start-Process pwsh -ArgumentList "-NoProfile", "-Command", "Start-Sleep 12" -PassThru -WindowStyle Hidden
+          $ov = Start-Process $exe -ArgumentList "--url", "http://127.0.0.1:9/ui/overlay.html", "--parent-pid", $parent.Id -PassThru
+          Start-Sleep 8
+          if ($ov.HasExited) { Write-Error "overlay exited early (code $($ov.ExitCode))"; exit 1 }
+          $parent.WaitForExit()
+          if (-not $ov.WaitForExit(15000)) { $ov.Kill(); Write-Error "overlay outlived its parent"; exit 1 }
+          "overlay ok"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: jarvis-overlay
+          path: |
+            overlay/target/release/jarvis-overlay.exe
+            overlay/Cargo.lock
+          retention-days: 7
+
   build:
     name: Build executable
-    needs: [check, ui]
+    needs: [check, ui, overlay]
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -67,6 +118,13 @@ jobs:
       - run: uv run python packaging/make_version_info.py
       - run: uv run python packaging/make_icon.py
       - run: uv run pyinstaller packaging/jarvis.spec --noconfirm --distpath dist --workpath build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: overlay
+      - name: Build the overlay into the app folder
+        shell: pwsh
+        run: ./packaging/build_overlay.ps1 -Dest dist/jarvis
       - name: Smoke test frozen build
         shell: pwsh
         env:
@@ -98,7 +156,7 @@ jobs:
           $p = Start-Process $setup.FullName -Wait -PassThru -ArgumentList `
             "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=`"$dir`"", "/TASKS="
           if ($p.ExitCode -ne 0) { Write-Error "installer exit $($p.ExitCode)"; exit 1 }
-          foreach ($exe in "jarvis.exe", "jarvisw.exe") {
+          foreach ($exe in "jarvis.exe", "jarvisw.exe", "jarvis-overlay.exe") {
             if (-not (Test-Path (Join-Path $dir $exe))) { Write-Error "$exe missing"; exit 1 }
           }
           & (Join-Path $dir "jarvis.exe") version

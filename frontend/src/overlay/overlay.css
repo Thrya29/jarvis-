@@ -1,0 +1,33 @@
+@import "../theme.css";
+
+/* The overlay window is transparent: only the panel is drawn. */
+html.overlay,
+html.overlay body {
+  background: transparent !important;
+  background-image: none !important;
+  overflow: hidden;
+  user-select: none;
+}
+
+.overlay-panel {
+  transition:
+    opacity 400ms ease,
+    box-shadow 200ms ease,
+    border-color 200ms ease;
+  background: rgb(3 10 18 / 0.72);
+}
+.overlay-panel.dim {
+  opacity: 0.4;
+}
+.overlay-panel.interactive {
+  border-color: var(--color-cyan);
+  box-shadow:
+    0 0 0 1px var(--color-cyan),
+    0 0 24px rgb(0 229 255 / 0.35);
+}
+.clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}

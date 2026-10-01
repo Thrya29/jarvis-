@@ -376,7 +376,7 @@ export function Wizard() {
               </div>
               <div className={featureRow}>
                 <Check checked={f.hud.enabled} onChange={(v) => setFeatures({ hud: { ...f.hud, enabled: v } })}>
-                  <strong>Floating overlay</strong> — see-through, always-on-top status while JARVIS works <span className="badge">v2.3</span>
+                  <strong>Floating overlay</strong> — a see-through, always-on-top status panel in the corner of your screen. Clicks pass through it; press Ctrl+Alt+O to approve from it, Ctrl+Alt+H to hide it
                 </Check>
               </div>
               <div className={featureRow}>

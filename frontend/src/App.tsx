@@ -79,6 +79,14 @@ function TopBar() {
       dispatch({ type: "refresh", status: true });
     }
   };
+  const toggleOverlay = async () => {
+    try {
+      await post("/v1/overlay", { enabled: !setup?.overlay?.running });
+    } catch (err) {
+      toast(errorText(err));
+    }
+    dispatch({ type: "refresh", status: true });
+  };
   const stop = async () => {
     send({ type: "task.cancel" });
     try {
@@ -111,6 +119,16 @@ function TopBar() {
         <button type="button" className={`pill cursor-pointer ${state.voiceState === "listening" ? "pill-live" : ""}`} title="Hands-free voice (say “Hey Jarvis”)" onClick={() => void toggleVoice()}>
           {voiceLabel[state.voiceState] || `Voice: ${state.voiceState}`}
         </button>
+        {setup?.overlay?.available ? (
+          <button
+            type="button"
+            className={`pill cursor-pointer ${setup.overlay.running ? "pill-live" : ""}`}
+            title={`Floating overlay (${setup.overlay.interact_hotkey} to interact, ${setup.overlay.hide_hotkey} to hide)`}
+            onClick={() => void toggleOverlay()}
+          >
+            Overlay {setup.overlay.running ? "on" : "off"}
+          </button>
+        ) : null}
         {spend !== undefined ? (
           <span className={`pill hidden sm:inline-flex ${cap && spend >= cap * 0.8 ? "pill-warn" : ""}`} title="Estimated API spend today">
             {cap ? `$${spend.toFixed(2)} / $${cap.toFixed(2)}` : `$${spend.toFixed(2)}`} today

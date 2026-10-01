@@ -15,13 +15,14 @@ export class JarvisSocket {
   constructor(
     private onEvent: Listener,
     private onState: StateListener,
+    private observe = false, // the overlay watches every client's tasks
   ) {}
 
   connect(): void {
     if (this.closed) return;
     const ws = new WebSocket(`ws://${location.host}/v1/ws`);
     this.ws = ws;
-    ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token: TOKEN }));
+    ws.onopen = () => ws.send(JSON.stringify({ type: "auth", token: TOKEN, observe: this.observe }));
     ws.onmessage = (e) => {
       let msg: JsonEvent;
       try {

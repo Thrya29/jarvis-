@@ -43,6 +43,7 @@ export interface SetupStatus {
   daily_cap_usd: number;
   documents: DocumentsStatus;
   connected_accounts: number;
+  overlay?: { enabled: boolean; available: boolean; running: boolean; interact_hotkey: string; hide_hotkey: string };
 }
 
 export interface Status {

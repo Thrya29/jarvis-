@@ -195,6 +195,13 @@ function applyEvent(s: State, e: JsonEvent): State {
       return { ...s, approvals: [...s.approvals, e as unknown as ApprovalRequest] };
     case "ask.request":
       return { ...s, asks: [...s.asks, e as unknown as AskRequest] };
+    case "approval.resolved":
+      // Answered in another window (e.g. the floating overlay).
+      return {
+        ...s,
+        approvals: s.approvals.filter((r) => r.id !== e.id),
+        asks: s.asks.filter((r) => r.id !== e.id),
+      };
     case "voice.state":
       return { ...s, voiceState: e.state };
     case "voice.log":
