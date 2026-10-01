@@ -27,6 +27,7 @@ from jarvis.core.config import AnthropicConfig
 from jarvis.llm.base import (
     DeltaSink,
     LLMError,
+    Source,
     StopKind,
     ToolCall,
     ToolOutcome,
@@ -42,6 +43,11 @@ FALLBACK_BETA = "server-side-fallback-2026-07-01"
 CONTEXT_BETA = "context-management-2025-06-27"
 UPDATES_BETA = "thinking-display-updates-2026-08-18"
 COMPUTER_TOOLSET = "computer_toolset_20260801"
+# Server-side web tools (search + fetch run on Anthropic's side; dynamic filtering built in).
+WEB_TOOLS = [
+    {"type": "web_search_20260209", "name": "web_search"},
+    {"type": "web_fetch_20260209", "name": "web_fetch"},
+]
 INTERRUPTED_SENTINEL = "This part of the response was interrupted before it finished."
 TASK_SENTINEL = "[[TASK]]"
 
@@ -101,12 +107,25 @@ async def _api_errors(model: str) -> AsyncIterator[None]:
 
 
 def _token_usage(u: Any) -> TokenUsage:
+    server = getattr(u, "server_tool_use", None)
     return TokenUsage(
         input_tokens=int(u.input_tokens or 0),
         output_tokens=int(u.output_tokens or 0),
         cache_read_tokens=int(getattr(u, "cache_read_input_tokens", 0) or 0),
         cache_write_tokens=int(getattr(u, "cache_creation_input_tokens", 0) or 0),
+        web_searches=int(getattr(server, "web_search_requests", 0) or 0) if server else 0,
     )
+
+
+def _sources(content: Any) -> tuple[Source, ...]:
+    """Web pages cited by the text blocks (deduplicated, in order)."""
+    seen: dict[str, Source] = {}
+    for block in content:
+        for c in getattr(block, "citations", None) or []:
+            url = getattr(c, "url", None)
+            if url and url not in seen:
+                seen[url] = Source(url, getattr(c, "title", None) or url)
+    return tuple(seen.values())
 
 
 def _check_budget(meter: SpendMeter | None) -> None:
@@ -155,6 +174,7 @@ class AnthropicConversation:
         tools: list[ToolSpec],
         computer_use: bool = False,
         meter: SpendMeter | None = None,
+        web_research: bool = False,
     ) -> None:
         self._client = client
         self._cfg = cfg
@@ -176,6 +196,8 @@ class AnthropicConversation:
         if computer_use:
             # All 17 members (screenshot, clicks, type, key, scroll, zoom, ...) enabled.
             self._tools.append({"type": COMPUTER_TOOLSET})
+        if web_research:
+            self._tools.extend(dict(t) for t in WEB_TOOLS)
         self.messages: list[BetaMessageParam] = []
 
     def add_user(self, text: str) -> None:
@@ -247,7 +269,7 @@ class AnthropicConversation:
             for b in message.content
             if b.type == "tool_use"
         ]
-        return TurnResult(text, calls, stop, usage)
+        return TurnResult(text, calls, stop, usage, sources=_sources(message.content))
 
 
 async def _forward(stream: Any, on_delta: DeltaSink) -> None:
@@ -356,10 +378,14 @@ class AnthropicProvider:
         )
 
     def new_conversation(
-        self, system: str, tools: list[ToolSpec], computer_use: bool = False
+        self,
+        system: str,
+        tools: list[ToolSpec],
+        computer_use: bool = False,
+        web_research: bool = False,
     ) -> AnthropicConversation:
         return AnthropicConversation(
-            self._client, self._cfg, system, tools, computer_use, self._meter
+            self._client, self._cfg, system, tools, computer_use, self._meter, web_research
         )
 
     async def check(self) -> tuple[bool, str]:

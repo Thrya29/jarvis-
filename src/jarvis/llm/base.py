@@ -63,12 +63,19 @@ class Usage:
 
 
 @dataclass(frozen=True)
+class Source:
+    url: str
+    title: str
+
+
+@dataclass(frozen=True)
 class TurnResult:
     text: str
     tool_calls: list[ToolCall]
     stop: StopKind
     usage: Usage = field(default_factory=Usage)
     detail: str | None = None  # e.g. refusal category
+    sources: tuple[Source, ...] = ()  # web pages cited in the text
 
 
 class LLMError(RuntimeError):
@@ -112,7 +119,11 @@ class LLMProvider(Protocol):
         ...
 
     def new_conversation(
-        self, system: str, tools: list[ToolSpec], computer_use: bool = False
+        self,
+        system: str,
+        tools: list[ToolSpec],
+        computer_use: bool = False,
+        web_research: bool = False,
     ) -> Conversation: ...
 
     async def check(self) -> tuple[bool, str]:

@@ -12,7 +12,7 @@ from typing import Any
 
 from jarvis.core.config import Activation, Settings, TTSEngine
 from jarvis.core.paths import AppPaths
-from jarvis.voice.models import WAKE_FILES, ModelStore, piper_files
+from jarvis.voice.models import DOC_FILES, WAKE_FILES, ModelStore, piper_files
 
 log = logging.getLogger(__name__)
 
@@ -31,6 +31,11 @@ def required_files(settings: Settings) -> list[str]:
     return files
 
 
+def document_files(settings: Settings) -> list[str]:
+    """Model files the document index needs (only when that feature is on)."""
+    return list(DOC_FILES) if settings.features.documents.enabled else []
+
+
 def setup_models(
     settings: Settings, paths: AppPaths, progress: Callable[[str, int, int], None] | None = None
 ) -> None:
@@ -40,6 +45,13 @@ def setup_models(
     store = model_store(paths)
     store.fetch(required_files(settings), progress)
     Transcriber(settings.voice.stt_model, store.whisper_dir(), settings.voice.stt_threads).load()
+
+
+def setup_document_models(
+    settings: Settings, paths: AppPaths, progress: Callable[[str, int, int], None] | None = None
+) -> None:
+    """Download and verify the 'Ask my documents' model (idempotent, ~35 MB)."""
+    model_store(paths).fetch(list(DOC_FILES), progress)
 
 
 @dataclass

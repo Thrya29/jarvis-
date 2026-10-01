@@ -479,7 +479,7 @@ wheels = [
 
 [[package]]
 name = "jarvis"
-version = "2.0.0"
+version = "2.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
@@ -504,6 +504,7 @@ dependencies = [
     { name = "send2trash" },
     { name = "sounddevice" },
     { name = "soxr" },
+    { name = "tokenizers" },
     { name = "tomli-w" },
     { name = "uiautomation", marker = "sys_platform == 'win32'" },
     { name = "uvicorn" },
@@ -546,6 +547,7 @@ requires-dist = [
     { name = "send2trash", specifier = ">=2.1.0" },
     { name = "sounddevice", specifier = ">=0.5.6" },
     { name = "soxr", specifier = ">=1.1.0" },
+    { name = "tokenizers", specifier = ">=0.23.2" },
     { name = "tomli-w", specifier = ">=1.1" },
     { name = "uiautomation", marker = "sys_platform == 'win32'", specifier = ">=2.0.20" },
     { name = "uvicorn", specifier = ">=0.32" },

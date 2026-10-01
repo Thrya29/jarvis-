@@ -25,6 +25,7 @@ PRICES: dict[str, tuple[float, float, float]] = {
     "claude-haiku-4-5": (1.0, 5.0, 0.10),
 }
 CACHE_WRITE_MULTIPLIER = 1.25  # 5-minute cache writes cost 1.25x base input
+WEB_SEARCH_USD = 10.0 / 1000  # server-side web search: $10 per 1,000 searches
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class TokenUsage:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    web_searches: int = 0
 
 
 class BudgetExceededError(RuntimeError):
@@ -47,7 +49,7 @@ def estimate_usd(model: str, u: TokenUsage) -> float:
         + u.cache_write_tokens * price_in * CACHE_WRITE_MULTIPLIER
         + u.cache_read_tokens * price_cache
         + u.output_tokens * price_out
-    ) / 1_000_000
+    ) / 1_000_000 + u.web_searches * WEB_SEARCH_USD
 
 
 class SpendMeter:
