@@ -4,11 +4,13 @@ An AI control layer for Windows. Give it a goal in plain language — by voice o
 plans the steps, operates your apps, files, browser and terminal, watches the screen to verify
 each step, and reports back. Full-duplex voice means you can interrupt it mid-sentence.
 
-> **Version 2.1.** A desktop app with a tray icon, full-duplex voice, screen control,
-> memory and saved workflows, personalised to each user by a setup wizard. New in 2.1:
-> each user connects their own email, calendar and cloud files, JARVIS searches the web
-> with sources, and it answers questions from your documents. Talk to JARVIS, interrupt
-> it mid-sentence, and change your instruction on the fly. It plans and works through files, Office documents, email drafts,
+> **Version 2.2.** A desktop app with a tray icon, full-duplex voice, screen control,
+> memory and saved workflows, personalised to each user by a setup wizard. Each user
+> connects their own email, calendar and cloud files; JARVIS searches the web with
+> sources and answers from your documents. New in 2.2: a redesigned HUD-style interface
+> with **live maps** of the planes overhead, who your PC is talking to, and your weather
+> and agenda. Talk to JARVIS, interrupt it mid-sentence, and change your instruction on
+> the fly. It plans and works through files, Office documents, email drafts,
 > the shell, the web and any app on screen, under a safety layer, and tells you what it did.
 > See [CHANGELOG.md](CHANGELOG.md).
 
@@ -20,24 +22,40 @@ each step, and reports back. Full-duplex voice means you can interrupt it mid-se
 
 ## Screenshots
 
-**At work:** the live plan, the activity feed, and an approval before anything risky. The
-request here came by voice.
+**Command:** type a goal or say "Hey Jarvis". The core in the middle shows whether JARVIS
+is standing by, listening or working. History (with Resume), memory and saved workflows
+are on the left; the live plan and activity feed on the right.
 
-![JARVIS working on a task and asking for approval](docs/screenshots/task.png)
+![JARVIS command view](docs/screenshots/main.png)
 
-**Home:** type a goal, or say "Hey Jarvis". History (with Resume for interrupted tasks),
-memory and saved workflows are on the left.
+**At work:** an approval before anything risky. The request here came by voice.
 
-![JARVIS main window](docs/screenshots/main.png)
+![JARVIS asking for approval during a task](docs/screenshots/task.png)
 
-**First-run setup (v2.0):** a seven-step wizard that sets your name, how JARVIS addresses
-you, its personality, the model, the voice and your features and budget. Each feature is a
-tick box; the ones arriving in later versions are saved now and switch on when they
-ship.
+**Live sky (v2.2):** aircraft around you from public ADS-B data, coloured by altitude,
+with emergency squawks in red. Click a plane for its details.
 
-![JARVIS setup screen](docs/screenshots/setup.png)
+![Live sky map](docs/screenshots/maps-sky.png)
 
-<sub>Rendered from the app's actual UI code with sample data.</sub>
+**Network security map (v2.2):** which programs on this PC talk to the internet and in
+which countries, with anything unusual flagged and the ports open to your network.
+
+![Network security map](docs/screenshots/maps-network.png)
+
+**Situation (v2.2):** your weather, the next 12 hours of rain chances, and today's
+calendar events placed on the map.
+
+![Situation map](docs/screenshots/maps-situation.png)
+
+**Connections and setup:** connect only what you want; the setup wizard sets your name,
+city, personality, model, voice, features and budget.
+
+![Connections](docs/screenshots/connections.png)
+
+![Setup wizard: features](docs/screenshots/setup.png)
+
+<sub>The real JARVIS UI with sample data. Flights and weather are live public data for
+the demo city; network connections are invented.</sub>
 
 ## Quick start
 
@@ -312,6 +330,23 @@ finds the right paragraph in a Word file. It handles text, Markdown, PDF, Word a
 re-checks for changes every 30 minutes, and only indexes allowed folders. The
 status is shown under **Connections → Your documents**.
 
+## Live maps (v2.2)
+
+Turn on **Live maps** in Settings → Features, and enter your city under About you. Three
+panels open from **Maps** in the left rail, and JARVIS can open them itself: *"show me the
+planes overhead"*, *"who is my PC talking to?"*, *"will it rain this afternoon?"*,
+*"show me Mumbai on the map"*.
+
+| Panel | What it shows | Where the data comes from |
+|---|---|---|
+| Live sky | Aircraft within your chosen range (20–400 km): callsign, altitude, speed, heading; emergency squawks (7500/7600/7700) in red | [OpenSky Network](https://opensky-network.org) public ADS-B data, fetched by the JARVIS service at most once a minute while the panel is open |
+| Network | Every outside connection grouped by program and country; unusual ports and unknown programs flagged; ports open to your network | Your PC's own connection table. Locations come from DB-IP's free country database (~4 MB, downloaded once and verified), looked up **on this PC**, so no addresses are sent anywhere |
+| Situation | Current weather, the next 12 hours' rain chance, the 3-day outlook, and today's events from connected calendars (placed at city level) | [Open-Meteo](https://open-meteo.com) (free, no account) and your Connections |
+
+Only your city's coordinates are sent: to OpenSky for flights and Open-Meteo for weather.
+Map tiles come from [OpenFreeMap](https://openfreemap.org). OpenSky's free data is for
+non-commercial use and has a daily limit, so flights may pause late in the day.
+
 ## Screen control (M2)
 
 JARVIS can see the screen and operate any app:
@@ -371,6 +406,8 @@ Set `JARVIS_HOME` to relocate all config, data and logs into one folder (portabl
 - Content from files, web pages and command output is fenced as untrusted data for the model.
 - Child processes get an environment with API keys and tokens removed.
 - A global kill hotkey (`Ctrl+Alt+J`) halts all activity (M2+).
+- The window's security policy allows one outside host, the map tiles; flight, weather
+  and location data is fetched by the JARVIS service, not the page (v2.2).
 - Connected accounts get only the permissions the user ticked; tokens are DPAPI-encrypted
   per Windows user, and sending email or inviting people always asks first (v2.1).
 
@@ -388,7 +425,7 @@ See [SECURITY.md](SECURITY.md) and [docs/architecture.md](docs/architecture.md).
 | M5 | Desktop app (window + tray), first-run setup, installer, V1 release | ✅ |
 | 2.0 | Setup wizard, personality, streaming replies, quick replies, budget | ✅ |
 | 2.1 | Connections (Microsoft, Google, IMAP), web research with sources, Ask my documents | ✅ |
-| 2.2 | New interface with live maps (sky, network, situation) | Planned |
+| 2.2 | New HUD interface (React) with live maps: sky, network, situation | ✅ |
 | 2.3 | Floating see-through overlay | Planned |
 
 ## Development
@@ -400,5 +437,17 @@ uv run mypy
 uv run pytest
 uv run pyinstaller packaging/jarvis.spec --noconfirm   # builds dist\jarvis\jarvis.exe
 ```
+
+The window is a React + Vite + Tailwind + MapLibre app in `frontend/`, built into
+`src/jarvis/ui/` (committed, so Python installs need no Node.js). After changing it:
+
+```powershell
+cd frontend
+npm ci
+npm run build          # type-checks, then writes src/jarvis/ui
+npm run dev            # optional: live reload against a running JARVIS on port 8765
+```
+
+CI rebuilds the UI and fails if the committed build is out of date.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).

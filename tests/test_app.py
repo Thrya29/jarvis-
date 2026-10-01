@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -60,14 +61,41 @@ def test_ui_is_served_with_strict_csp(client: TestClient) -> None:
         and "unsafe-inline" not in csp
         and "frame-ancestors 'none'" in csp
     )
-    assert client.get("/ui/app.js").status_code == 200
-    assert client.get("/ui/app.css").status_code == 200
+    assert "worker-src 'self'" in csp and "blob:" not in csp.split("worker-src")[1].split(";")[0]
+    # The built bundle (React app) is referenced from index.html and served.
+    assets = re.findall(r'(?:src|href)="(/ui/assets/[^"]+)"', r.text)
+    assert any(a.endswith(".js") for a in assets) and any(a.endswith(".css") for a in assets)
+    for asset in assets:
+        got = client.get(asset)
+        assert got.status_code == 200, asset
+    assert "<script>" not in r.text and "style=" not in r.text  # nothing inline (CSP)
 
 
-def test_ui_never_uses_innerhtml() -> None:
-    js = (Path(__file__).parents[1] / "src/jarvis/ui/app.js").read_text(encoding="utf-8")
-    assert "innerHTML" not in js.replace("never innerHTML", "")
-    assert "eval(" not in js
+FRONTEND = Path(__file__).parents[1] / "frontend" / "src"
+
+
+def test_ui_never_injects_markup() -> None:
+    """Our UI code renders text only; markup injection APIs are banned outright."""
+    sources = [p for p in FRONTEND.rglob("*") if p.suffix in {".ts", ".tsx"}]
+    assert sources, "frontend sources missing"
+    for path in sources:
+        code = path.read_text(encoding="utf-8")
+        for banned in (
+            "dangerouslySetInnerHTML=",
+            ".innerHTML",
+            "outerHTML",
+            "insertAdjacentHTML",
+            "eval(",
+            "new Function(",
+        ):
+            assert banned not in code, f"{banned} in {path.name}"
+
+
+def test_built_ui_is_present() -> None:
+    """src/jarvis/ui is the committed build of frontend/ (CI rebuilds it and compares)."""
+    ui = Path(__file__).parents[1] / "src" / "jarvis" / "ui"
+    assert (ui / "index.html").exists() and (ui / "icon.svg").exists()
+    assert any((ui / "assets").glob("maplibre-gl-worker-*.js"))
 
 
 def test_api_requires_token(client: TestClient) -> None:

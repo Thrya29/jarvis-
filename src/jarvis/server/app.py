@@ -61,9 +61,13 @@ class ImapRequest(BaseModel):
     capabilities: list[Capability]
 
 
+# Map tiles and label glyphs are the only third-party requests the window makes
+# (flight, weather and location data are fetched by the daemon, not the page).
+MAP_TILES = "https://tiles.openfreemap.org"
 CSP = (
-    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
-    "connect-src 'self' ws://127.0.0.1:* ws://localhost:*; font-src 'self'; "
+    "default-src 'none'; script-src 'self'; worker-src 'self'; style-src 'self'; "
+    "img-src 'self' data: blob:; "
+    f"connect-src 'self' ws://127.0.0.1:* ws://localhost:* {MAP_TILES}; font-src 'self'; "
     "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 )
 

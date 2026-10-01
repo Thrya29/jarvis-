@@ -26,3 +26,7 @@ Thumbs.db
 desktop.ini
 packaging/version_info.txt
 packaging/jarvis.ico
+
+# Frontend (React/Vite); the built UI in src/jarvis/ui is committed
+node_modules/
+frontend/.vite/

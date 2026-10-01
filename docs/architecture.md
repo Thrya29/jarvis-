@@ -179,6 +179,47 @@ Player ◄── Piper TTS (sentence by sentence)          │
 - `voice/engine.py`: the conversation state machine (see its module docstring).
 - `voice/models.py`: pinned, hash-verified model downloads into the cache directory.
 
+## Desktop UI (v2.2)
+
+`frontend/` is a React 19 + Vite + Tailwind 4 app built into `src/jarvis/ui/` (committed;
+CI checks it matches a fresh build). Structure:
+
+- `state.tsx`: a single reducer turns daemon WebSocket events into UI state (chat, streaming
+  message, plan, activity, approvals/questions, voice, connections, documents, map focus).
+- `lib/`: the REST client (token from the URL fragment, kept in `sessionStorage`) and the
+  WebSocket (auth in the first frame, backoff reconnect).
+- `views/`: Chat, Maps, Connections, the setup Wizard, and overlay dialogs (native
+  `<dialog>`).
+- `maps/style.ts`: the HUD basemap style on OpenFreeMap vector tiles, plus geometry
+  helpers (range rings, curved arcs, a code-drawn SDF plane icon, so no sprites are
+  needed).
+
+Rendering is text-only. A test bans `dangerouslySetInnerHTML`, `.innerHTML`,
+`insertAdjacentHTML`, `eval` and `new Function` in the UI source.
+
+## Live maps (v2.2)
+
+`maps/service.py` (`MapService`, shared per process) serves the three panels and the
+agent's map tools, with per-source caches:
+
+- sky: 60 s;
+- weather: 10 min;
+- agenda: 5 min;
+- network: 4 s.
+
+The sources:
+
+- `maps/sky.py`: the OpenSky `states/all` bounding-box query, parsed into aircraft with
+  distance and emergency squawks.
+- `maps/network.py`: a psutil connection snapshot, grouped by (remote IP, PID), with
+  flags. `GeoDB` downloads DB-IP's country-lite MMDB (this month's, or last month's
+  early in a month), verifies it and looks up locally. `country_centroids.json` (Google
+  DSPL, CC BY 4.0) places countries on the map.
+- `maps/weather.py`: Open-Meteo geocoding and forecast.
+
+The UI polls only the panel on screen. The `map_show` tool emits a `map.focus` event that
+switches the window to that panel and flies there.
+
 ## Connections (v2.1)
 
 - `connect/oauth.py`: authorization code + PKCE with a one-shot loopback listener

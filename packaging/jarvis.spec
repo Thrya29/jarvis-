@@ -26,6 +26,8 @@ hiddenimports = (
 datas = (
     # The desktop UI (HTML/CSS/JS), served by the daemon.
     [("../src/jarvis/ui", "jarvis/ui")]
+    # Country centre points for the network map.
+    + [("../src/jarvis/maps/country_centroids.json", "jarvis/maps")]
     + copy_metadata("jarvis")
     + copy_metadata("anthropic")
     # python-docx ships its default template as package data.

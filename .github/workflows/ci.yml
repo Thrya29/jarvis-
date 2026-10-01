@@ -29,9 +29,32 @@ jobs:
       - run: uv run mypy
       - run: uv run pytest
 
+  ui:
+    name: UI build is current
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - name: Committed src/jarvis/ui matches a fresh build of frontend/
+        shell: pwsh
+        run: |
+          git add -A ../src/jarvis/ui
+          $changes = git status --porcelain -- ../src/jarvis/ui
+          if ($changes) { $changes; Write-Error "Run 'npm run build' in frontend/ and commit src/jarvis/ui"; exit 1 }
+
   build:
     name: Build executable
-    needs: check
+    needs: [check, ui]
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
@@ -56,7 +79,7 @@ jobs:
           # The bundled interpreter used by run_python must have the Office libraries.
           $script = Join-Path $env:RUNNER_TEMP "smoke.py"
           $doc = Join-Path $env:RUNNER_TEMP "smoke.docx"
-          "import docx, openpyxl, pypdf, mss, PIL, uiautomation, faster_whisper, ctranslate2, onnxruntime, piper, soxr, livekit.rtc`nfrom jarvis.voice.vad import SileroVAD; SileroVAD()`ndocx.Document().save(r'$doc')`nprint('ok')" | Set-Content -Encoding utf8 $script
+          "import docx, openpyxl, pypdf, mss, PIL, uiautomation, faster_whisper, ctranslate2, onnxruntime, piper, soxr, livekit.rtc`nfrom jarvis.voice.vad import SileroVAD; SileroVAD()`nimport psutil, maxminddb, pathlib`nfrom jarvis.maps.network import CENTROIDS, GeoDB, snapshot; assert CENTROIDS['IN']; snapshot(GeoDB(pathlib.Path('.')))`ndocx.Document().save(r'$doc')`nprint('ok')" | Set-Content -Encoding utf8 $script
           ./dist/jarvis/jarvis.exe _pyexec $script
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path $doc)) { exit 1 }
       - name: Build installer
