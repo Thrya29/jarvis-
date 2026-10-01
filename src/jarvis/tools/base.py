@@ -66,6 +66,7 @@ class ToolContext:
     store: Store | None = None  # long-term memory, workflows, task journal
     documents: Any = None  # knowledge.index.DocIndex when 'Ask my documents' is on
     connections: Any = None  # connect.accounts.ConnectionManager (email, calendar, files)
+    maps: Any = None  # maps.service.MapService when live maps are on
 
 
 class Tool[A: ToolArgs](ABC):

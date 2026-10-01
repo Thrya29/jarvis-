@@ -1,5 +1,46 @@
 # Changelog
 
+## 2.2.0 — 2026-10-01
+
+A new interface, and live maps.
+
+- **New HUD-style interface**, rebuilt in React + Vite + Tailwind:
+  - a left rail with Command, Maps, Connections and Settings;
+  - an animated core that shows whether JARVIS is standing by, listening, working or
+    replying;
+  - self-hosted fonts.
+  - Every feature of the old window carries over: the setup wizard, streaming replies,
+    sources, plan and activity, approvals, history/memory/workflows, Connections and
+    voice controls.
+  - Still rendered as text only (no `innerHTML`), under the same strict CSP. A test bans
+    markup-injection APIs in the UI source.
+- **Live maps** (MapLibre GL on OpenFreeMap vector tiles, custom dark style):
+  - **Live sky**: aircraft near you from the OpenSky Network, coloured by altitude.
+    Emergency squawks are highlighted; click a plane for details.
+  - **Network security map**: the outside connections of this PC by program and country.
+    It flags unusual ports and unknown programs, and lists ports open to the network.
+    Locations come from DB-IP's country database, looked up locally.
+  - **Situation**: Open-Meteo weather, a 12-hour rain chart, a 3-day outlook, and today's
+    calendar events on the map.
+  - **"Fly to a place"** search.
+- **Map tools** for the agent:
+  - `map_show` opens a panel, centred on a place if asked;
+  - `flights_nearby`, `network_activity` and `weather`.
+- **Settings**:
+  - home city (geocoded when saved);
+  - Live maps with per-panel tick boxes and a sky range;
+  - later features' version badges updated (overlay v2.3, protocols v2.4, phone v2.5,
+    helpers v2.6, smart home and webcam v2.7).
+- **Security**:
+  - The CSP adds `worker-src 'self'` (MapLibre's worker is a same-origin file, not a
+    `blob:`) and the tile host.
+  - All other map data is fetched by the daemon.
+  - The geolocation database is verified before use.
+- **Build and CI**:
+  - the UI is built from `frontend/` into `src/jarvis/ui/`;
+  - CI rebuilds it and fails if the committed build is stale;
+  - the frozen-build smoke test now covers the network map.
+
 ## 2.1.0 — 2026-10-01
 
 Your accounts, the web and your documents.

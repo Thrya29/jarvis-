@@ -45,6 +45,8 @@ from jarvis.core.secrets import SecretName, get_secret, set_secret
 from jarvis.llm import LLMError, create_provider
 from jarvis.llm.base import LLMProvider
 from jarvis.llm.budget import SpendMeter
+from jarvis.maps.service import MapService
+from jarvis.maps.weather import MapDataError
 from jarvis.memory.store import Store
 from jarvis.safety.policy import Approver
 from jarvis.server.session import TaskBoard
@@ -143,6 +145,12 @@ class Hub:
         return self._store
 
     @property
+    def maps(self) -> MapService:
+        from jarvis.agent.factory import open_maps
+
+        return open_maps(self.settings, self.paths)
+
+    @property
     def connections(self) -> ConnectionManager:
         from jarvis.agent.factory import open_connections
 
@@ -217,6 +225,24 @@ class Hub:
             "voices": sorted(k for k in PIPER_VOICES if k != "amy"),
         }
 
+    async def _locate_home(self, changes: dict[str, dict[str, Any]]) -> None:
+        """Turn a typed home location into coordinates before validating settings."""
+        profile = changes.get("profile")
+        if not isinstance(profile, dict) or "location" not in profile:
+            return
+        text = str(profile["location"] or "").strip()
+        current = self.settings.profile
+        if text == current.location and current.latitude is not None:
+            return
+        if not text:
+            profile.update(location="", latitude=None, longitude=None)
+            return
+        try:
+            place = await self.maps.locate(text)
+        except MapDataError as exc:
+            raise ValueError(str(exc)) from exc
+        profile.update(location=place.label, latitude=place.latitude, longitude=place.longitude)
+
     async def update_settings(self, changes: dict[str, dict[str, Any]]) -> dict[str, Any]:
         """Validate, apply and persist settings changes from the UI.
 
@@ -230,6 +256,7 @@ class Hub:
             "budget": BudgetConfig,
             "connections": ConnectionsConfig,
         }
+        await self._locate_home(changes)
         validated: dict[str, BaseModel] = {}
         for section, values in changes.items():
             if section == "voice":
@@ -553,6 +580,10 @@ class Hub:
 
     async def shutdown(self) -> None:
         await self.cancel_sign_in()
+        from jarvis.agent.factory import _MAPS
+
+        for service, _ in _MAPS.values():
+            service.close()
         for fut in list(self._background):
             fut.cancel()
         await self.stop_voice()
