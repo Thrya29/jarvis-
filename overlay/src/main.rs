@@ -13,7 +13,9 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use tauri::{AppHandle, Manager, PhysicalPosition, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Manager, PhysicalPosition, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 const LABEL: &str = "overlay";
@@ -52,7 +54,10 @@ fn parse_args(args: impl Iterator<Item = String>) -> Result<Args, String> {
 
 fn shortcuts() -> (Shortcut, Shortcut) {
     let mods = Some(Modifiers::CONTROL | Modifiers::ALT);
-    (Shortcut::new(mods, Code::KeyO), Shortcut::new(mods, Code::KeyH))
+    (
+        Shortcut::new(mods, Code::KeyO),
+        Shortcut::new(mods, Code::KeyH),
+    )
 }
 
 /// Top-right of the primary monitor.
@@ -179,7 +184,9 @@ mod tests {
     use super::parse_args;
 
     fn parse(list: &[&str]) -> Result<String, String> {
-        let argv = std::iter::once("jarvis-overlay").chain(list.iter().copied()).map(String::from);
+        let argv = std::iter::once("jarvis-overlay")
+            .chain(list.iter().copied())
+            .map(String::from);
         parse_args(argv).map(|a| a.url.to_string())
     }
 
@@ -197,7 +204,13 @@ mod tests {
 
     #[test]
     fn parent_pid_is_optional() {
-        let argv = ["jarvis-overlay", "--url", "http://127.0.0.1:1/", "--parent-pid", "42"];
+        let argv = [
+            "jarvis-overlay",
+            "--url",
+            "http://127.0.0.1:1/",
+            "--parent-pid",
+            "42",
+        ];
         let args = parse_args(argv.iter().map(|s| s.to_string())).unwrap();
         assert_eq!(args.parent_pid, Some(42));
     }
