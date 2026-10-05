@@ -1,0 +1,30 @@
+[package]
+name = "jarvis-overlay"
+version = "2.3.0"
+description = "JARVIS floating overlay: a see-through, always-on-top, click-through status window"
+license = "MIT"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+
+[[bin]]
+name = "jarvis-overlay"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# custom-protocol: a release build, not a dev server build.
+tauri = { version = "2", features = ["custom-protocol"] }
+tauri-plugin-global-shortcut = "2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

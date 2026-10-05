@@ -197,6 +197,24 @@ CI checks it matches a fresh build). Structure:
 Rendering is text-only. A test bans `dangerouslySetInnerHTML`, `.innerHTML`,
 `insertAdjacentHTML`, `eval` and `new Function` in the UI source.
 
+## Floating overlay (v2.3)
+
+- `overlay/` (Rust, Tauri 2) creates one transparent, undecorated, always-on-top,
+  skip-taskbar, click-through window. It loads `/ui/overlay.html#token=…` from the
+  daemon (validated to be loopback), places itself at the top-right of the primary
+  monitor, and registers Ctrl+Alt+O (toggle click-through, then
+  `window.dispatchEvent('jarvis-overlay')` via `eval`) and Ctrl+Alt+H (hide/show). A
+  thread waits on the parent process handle and exits with it.
+- `app/overlay.py` (`Overlay`) starts and stops it. The hub runs it exactly when
+  `features.hud.enabled`, in desktop mode only.
+- `server/session.py` (`SessionRegistry`): observer sessions (auth frame
+  `"observe": true`) receive mirrored task events from every session.
+  `approval.response`/`ask.response` from any session resolve the pending request
+  wherever it lives, and `approval.resolved` is broadcast so other windows close the
+  prompt.
+- `frontend/overlay.html` → `src/overlay/` is a separate Vite entry. It shares React and
+  the socket client, but not MapLibre.
+
 ## Live maps (v2.2)
 
 `maps/service.py` (`MapService`, shared per process) serves the three panels and the

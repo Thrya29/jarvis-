@@ -1,6 +1,6 @@
 [project]
 name = "jarvis"
-version = "2.2.0"
+version = "2.3.0"
 description = "JARVIS - an AI control layer for Windows: voice, vision, and computer control."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

@@ -1,5 +1,35 @@
 # Changelog
 
+## 2.3.0 — 2026-10-01
+
+The floating overlay.
+
+- **Floating see-through overlay** (`jarvis-overlay.exe`, Tauri 2 + WebView2):
+  - a transparent, always-on-top, click-through panel in the top-right corner;
+  - shows the core state, plan progress, the current step, the latest reply and pending
+    approvals;
+  - fades when idle.
+  - **Ctrl+Alt+O** makes it clickable, to approve, decline or open JARVIS.
+  - **Ctrl+Alt+H** hides or shows it.
+  - Turn it on in Settings → Features, from the top bar or from the tray. The setting is
+    remembered.
+- **Approvals from any window**:
+  - an approval can be answered in any connected window, and the other windows' prompts
+    close automatically (`approval.resolved`);
+  - observer clients (the overlay) see every task's events, whichever window or voice
+    started it.
+- **Security**:
+  - the overlay only loads the local JARVIS service (any other URL is refused at start);
+  - the page runs as a remote origin with no Tauri IPC/native access;
+  - native behaviour (hotkeys, click-through, placement) lives in Rust;
+  - the overlay exits when JARVIS exits.
+- **Build**:
+  - the overlay is compiled in CI and in the release workflow
+    (`packaging/build_overlay.ps1`);
+  - CI runs `cargo fmt`, `clippy -D warnings` and unit tests, plus a smoke test that it
+    starts, refuses foreign URLs and exits with its parent;
+  - the installer includes it and stops it on uninstall.
+
 ## 2.2.0 — 2026-10-01
 
 A new interface, and live maps.

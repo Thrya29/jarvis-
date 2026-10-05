@@ -4,12 +4,13 @@ An AI control layer for Windows. Give it a goal in plain language — by voice o
 plans the steps, operates your apps, files, browser and terminal, watches the screen to verify
 each step, and reports back. Full-duplex voice means you can interrupt it mid-sentence.
 
-> **Version 2.2.** A desktop app with a tray icon, full-duplex voice, screen control,
+> **Version 2.3.** A desktop app with a tray icon, full-duplex voice, screen control,
 > memory and saved workflows, personalised to each user by a setup wizard. Each user
 > connects their own email, calendar and cloud files; JARVIS searches the web with
-> sources and answers from your documents. New in 2.2: a redesigned HUD-style interface
-> with **live maps** of the planes overhead, who your PC is talking to, and your weather
-> and agenda. Talk to JARVIS, interrupt it mid-sentence, and change your instruction on
+> sources and answers from your documents. 2.2 brought a HUD-style interface with **live
+> maps** (planes overhead, who your PC talks to, weather and agenda); new in 2.3, a
+> **floating see-through overlay** that keeps JARVIS's status in the corner of your
+> screen while you work. Talk to JARVIS, interrupt it mid-sentence, and change your instruction on
 > the fly. It plans and works through files, Office documents, email drafts,
 > the shell, the web and any app on screen, under a safety layer, and tells you what it did.
 > See [CHANGELOG.md](CHANGELOG.md).
@@ -330,6 +331,25 @@ finds the right paragraph in a Word file. It handles text, Markdown, PDF, Word a
 re-checks for changes every 30 minutes, and only indexes allowed folders. The
 status is shown under **Connections → Your documents**.
 
+## Floating overlay (v2.3)
+
+A small see-through panel in the top-right corner of your screen, always on top. It shows
+whether JARVIS is standing by, listening or working; the current step and progress; the
+latest reply as it streams; and any approval JARVIS is waiting for.
+
+- **Clicks pass through it**, so it never gets in the way of your work.
+- **Ctrl+Alt+O** makes it clickable: answer an approval right there (the main window's
+  prompt closes too), or open the main window. Press it again to lock it.
+- **Ctrl+Alt+H** hides or shows it.
+- It fades when JARVIS is idle and lights up when something happens.
+
+![Floating overlay with an approval waiting](docs/screenshots/overlay.png)
+
+Turn it on in Settings → Features (*Floating overlay*), from the **Overlay** button in the
+top bar, or from the tray menu. It's a small native program (`jarvis-overlay.exe`, built
+with Tauri on the WebView2 that ships with Windows). It only loads JARVIS's local page,
+and it gets no access to your system. It closes automatically when JARVIS does.
+
 ## Live maps (v2.2)
 
 Turn on **Live maps** in Settings → Features, and enter your city under About you. Three
@@ -426,7 +446,7 @@ See [SECURITY.md](SECURITY.md) and [docs/architecture.md](docs/architecture.md).
 | 2.0 | Setup wizard, personality, streaming replies, quick replies, budget | ✅ |
 | 2.1 | Connections (Microsoft, Google, IMAP), web research with sources, Ask my documents | ✅ |
 | 2.2 | New HUD interface (React) with live maps: sky, network, situation | ✅ |
-| 2.3 | Floating see-through overlay | Planned |
+| 2.3 | Floating see-through overlay (Tauri), approvals from any window | ✅ |
 
 ## Development
 
@@ -449,5 +469,11 @@ npm run dev            # optional: live reload against a running JARVIS on port 
 ```
 
 CI rebuilds the UI and fails if the committed build is out of date.
+
+The overlay (`overlay/`, Rust + Tauri 2) is compiled by CI and the release workflow
+(`packaging/build_overlay.ps1`), so building JARVIS itself needs no Rust. To build it
+locally you need Rust (MSVC) and the C++ Build Tools, then run
+`./packaging/build_overlay.ps1`. JARVIS finds `overlay/target/release/jarvis-overlay.exe`,
+or the file named by `JARVIS_OVERLAY_EXE`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).

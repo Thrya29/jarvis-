@@ -11,6 +11,10 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: false,
     chunkSizeWarningLimit: 2500,
+    rollupOptions: {
+      // The main window, and the page the floating overlay shows.
+      input: { main: "index.html", overlay: "overlay.html" },
+    },
   },
   server: {
     // `npm run dev` against a running daemon: open http://localhost:5173/ui/#token=...

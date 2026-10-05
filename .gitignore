@@ -30,3 +30,8 @@ packaging/jarvis.ico
 # Frontend (React/Vite); the built UI in src/jarvis/ui is committed
 node_modules/
 frontend/.vite/
+
+# Overlay (Rust/Tauri): build output and the icon generated in CI
+overlay/target/
+overlay/icons/
+!overlay/dist/
