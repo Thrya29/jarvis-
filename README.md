@@ -343,6 +343,8 @@ latest reply as it streams; and any approval JARVIS is waiting for.
 - **Ctrl+Alt+H** hides or shows it.
 - It fades when JARVIS is idle and lights up when something happens.
 
+![Floating overlay with an approval waiting](docs/screenshots/overlay.png)
+
 Turn it on in Settings → Features (*Floating overlay*), from the **Overlay** button in the
 top bar, or from the tray menu. It's a small native program (`jarvis-overlay.exe`, built
 with Tauri on the WebView2 that ships with Windows). It only loads JARVIS's local page,
